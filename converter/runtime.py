@@ -1,0 +1,384 @@
+"""Runtime helpers used by the generated notebooks.
+
+The generated notebooks keep each panel's SQL and layout inline (so they read as
+a faithful conversion of the dashboard) and call these helpers for the
+mechanical parts: running BigQuery, turning a variable query into dropdown
+options, and rebuilding an ``ae3e-plotly-panel`` figure from a result frame.
+
+Importing this module from a notebook requires the repo root on ``sys.path``;
+the generated setup cell handles that.
+"""
+
+from __future__ import annotations
+
+import copy
+import re
+
+import pandas as pd
+import plotly.graph_objects as go
+
+try:  # only needed at notebook runtime
+    from google.cloud import bigquery
+except Exception:  # pragma: no cover - allows importing for unit tests
+    bigquery = None
+
+
+# Default billing/job project. The dashboards' panel ``project`` fields vary
+# (mlab-oti, measurement-lab, ...), but the referenced dataset lives in
+# mlab-collaboration and queries run fine billed to the authenticated default
+# project, so we use one client unless overridden.
+DEFAULT_PROJECT = "mlab-collaboration"
+
+
+def bq_client(project: str | None = None):
+    """Return a BigQuery client (cached on the module)."""
+    if bigquery is None:
+        raise RuntimeError("google-cloud-bigquery is not installed")
+    return bigquery.Client(project=project or DEFAULT_PROJECT)
+
+
+def run_query(client, sql: str) -> pd.DataFrame:
+    """Execute ``sql`` and return the result as a DataFrame."""
+    return client.query(sql).result().to_dataframe(create_bqstorage_client=False)
+
+
+def variable_options(client, sql: str) -> list[tuple[str, str]]:
+    """Run a Grafana template-variable query and return ``(label, value)`` pairs.
+
+    Grafana's convention: columns named ``__text``/``__value`` (or ``text``/
+    ``value``) define the label and value; a single column is used for both.
+    """
+    df = run_query(client, sql)
+    if df.empty:
+        return []
+    cols = {c.lower(): c for c in df.columns}
+    text_col = cols.get("__text") or cols.get("text")
+    value_col = cols.get("__value") or cols.get("value")
+    if text_col and value_col:
+        pairs = list(zip(df[text_col].astype(str), df[value_col].astype(str)))
+    elif text_col:
+        s = df[text_col].astype(str)
+        pairs = list(zip(s, s))
+    elif value_col:
+        s = df[value_col].astype(str)
+        pairs = list(zip(s, s))
+    else:  # fall back to the first column for both
+        s = df.iloc[:, 0].astype(str)
+        pairs = list(zip(s, s))
+    # De-duplicate, preserving order.
+    seen, out = set(), []
+    for label, value in pairs:
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append((label, value))
+    return out
+
+
+def _split_top_args(text: str) -> list[str]:
+    """Split a function's argument text on top-level commas.
+
+    Handles nested parentheses and single/double-quoted strings so that
+    ``DATE(REGEXP_EXTRACT("...", '...'))`` is kept intact as one argument.
+    """
+    args, depth, buf, i = [], 0, [], 0
+    in_str, str_ch = False, None
+    while i < len(text):
+        ch = text[i]
+        if in_str:
+            buf.append(ch)
+            if ch == '\\':
+                i += 1
+                if i < len(text):
+                    buf.append(text[i])
+            elif ch == str_ch:
+                in_str = False
+        elif ch in ('"', "'"):
+            in_str, str_ch = True, ch
+            buf.append(ch)
+        elif ch in '([':
+            depth += 1
+            buf.append(ch)
+        elif ch in ')]':
+            depth -= 1
+            buf.append(ch)
+        elif ch == ',' and depth == 0:
+            args.append(''.join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    if buf:
+        args.append(''.join(buf).strip())
+    return args
+
+
+# Matches the opening of an access_ndt7_isp_histograms call in a SQL template.
+_ISP_HIST_CALL_RE = re.compile(
+    r'(\s*FROM\s+)`\$\{dataset\}\.access_ndt7_isp_histograms`\s*\('
+)
+
+
+def rewrite_histogram_call(sql: str, method: str) -> str:
+    """Replace ``access_ndt7_isp_histograms`` with the appropriate direct call.
+
+    The wrapper function is replaced with a direct call to the right underlying
+    function based on ``method``:
+
+    * ``cached``      → ``access_ndt7_cached_histograms(field, siteRegex, ispCount)``
+    * ``live``/unified → ``unified_ndt7_isp_histograms(method, xAxis, binSize, field,
+                          startDate, endDate, siteRegex)``
+    * ``experimental`` → ``experimental_ndt7_isp_histograms(...)`` (same 7-arg signature)
+
+    Called on the raw SQL template (before variable interpolation) so that
+    Grafana ``${...}`` placeholders are still present and the right ones are
+    preserved or dropped per function signature.
+
+    ``ispCount`` is dropped for the live/experimental paths because those
+    functions don't accept it — ISP filtering happens via the WHERE clause.
+    """
+    m = _ISP_HIST_CALL_RE.search(sql)
+    if not m:
+        return sql  # no wrapper call found (e.g. summary panels), leave unchanged
+
+    # Balance-paren scan to find the matching close paren.
+    open_pos = m.end() - 1
+    depth = 0
+    close_pos = open_pos
+    for i in range(open_pos, len(sql)):
+        ch = sql[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                close_pos = i
+                break
+
+    args = _split_top_args(sql[open_pos + 1:close_pos])
+    # Argument positions (8 total in access_ndt7_isp_histograms):
+    #   0: method   1: xAxis   2: binSize   3: field
+    #   4: startDate  5: endDate  6: siteRegex  7: ispCount
+    field      = args[3].strip()
+    site_regex = args[6].strip()
+    isp_count  = args[7].strip()
+    from_kw    = m.group(1)          # e.g. '\n  FROM '
+
+    if 'cached' in method.lower():
+        new_call = (
+            f'{from_kw}`${{dataset}}.access_ndt7_cached_histograms` ({field},\n'
+            f'    {site_regex}, {isp_count})'
+        )
+    elif 'exp' in method.lower():
+        new_call = (
+            f'{from_kw}`${{dataset}}.experimental_ndt7_isp_histograms` '
+            f'({args[0]}, {args[1]}, {args[2]}, {field},\n'
+            f'    {args[4]},\n'
+            f'    {args[5]},\n'
+            f'    {site_regex})'
+        )
+    else:  # live / unified
+        new_call = (
+            f'{from_kw}`${{dataset}}.unified_ndt7_isp_histograms` '
+            f'({args[0]}, {args[1]}, {args[2]}, {field},\n'
+            f'    {args[4]},\n'
+            f'    {args[5]},\n'
+            f'    {site_regex})'
+        )
+
+    return sql[:m.start()] + new_call + sql[close_pos + 1:]
+
+
+def asn_regex(isp_names: list) -> str:
+    """Build a BQ regex matching any of the ISP names by their ASN (client AS number).
+
+    ISP names in these dashboards follow the format ``"{ASN} {Name}"``, e.g.
+    ``"18881 TELEFÔNICA BRASIL S A"``.  The ASN is the leading run of digits.
+    Matching on ``^(18881 |28573 )`` — ASN delimited by start-of-field and a
+    trailing space — is more stable than matching the full name text.
+
+    The returned string is intended to be wrapped in a :class:`qb.Raw` value so
+    that it passes through :func:`qb.interpolate` without further escaping.  The
+    SQL template already supplies the surrounding ``^(...)`` via::
+
+        REGEXP_CONTAINS(ISPname, "^(${ClientISP:regex})")
+
+    so the returned value should be ``"18881 |28573 "`` (not ``"^(18881 |28573 )"``).
+    """
+    parts = []
+    for name in isp_names:
+        asn = str(name).split()[0]
+        if asn.isdigit():
+            parts.append(asn + " ")
+    return "|".join(parts) if parts else ".*"
+
+
+# Regex patterns used by make_bulk_sql — compiled once.
+_BULK_CTE_SELECT = re.compile(
+    r'(siteName,)((?:\s*\n\s*--[^\n]*)*)(\s*FROM\s+`)')
+_BULK_GROUP_BY = re.compile(r'(?i)(GROUP BY\s+[^\n]+)')
+_BULK_PARTITION = re.compile(r'(?i)\b(PARTITION\s+BY\s+siteName)\b')
+_BULK_FINAL_SELECT = re.compile(r'(?i)(siteName,)(\s*\n\s*FROM\s+ISPdata\b)')
+
+
+def make_bulk_sql(sql: str) -> str:
+    """Add ISPname to a histogram panel SQL so one query covers all client ISPs.
+
+    The original SQL is designed for a single client ISP: it filters by
+    ``REGEXP_CONTAINS(ISPname, ...)`` and then aggregates by ``siteName`` (the
+    M-Lab server), producing one line per server.  When a broad regex matches
+    multiple ISPs the ``GROUP BY siteName`` step would collapse them together.
+
+    This function adds ``ISPname`` to:
+
+    1. The CTE ``SELECT`` list — to carry client identity through the GROUP BY.
+    2. The ``GROUP BY`` — to keep each client ISP's histogram separate.
+    3. Every ``PARTITION BY siteName`` window clause — so PDF/CDF normalisation
+       stays per-(server, ISP) pair rather than mixing ISPs.
+    4. The final outer ``SELECT`` — so the caller can filter rows by ISP.
+
+    Server selection (``siteRegex`` / ``${region:regex}``) and the ``siteName``
+    column itself are unchanged.
+    """
+    # 1. CTE SELECT: siteName, → siteName,\n    ISPname,  (handles comment lines)
+    sql = _BULK_CTE_SELECT.sub(
+        lambda m: m.group(1) + '\n    ISPname,' + m.group(2) + m.group(3), sql)
+    # 2. GROUP BY: append , ISPname
+    sql = _BULK_GROUP_BY.sub(r'\1, ISPname', sql)
+    # 3. PARTITION BY siteName → PARTITION BY siteName, ISPname (preserve case)
+    sql = _BULK_PARTITION.sub(lambda m: m.group(1) + ', ISPname', sql)
+    # 4. Final SELECT: siteName, → siteName,\n    ISPname,  (before FROM ISPdata)
+    sql = _BULK_FINAL_SELECT.sub(
+        lambda m: m.group(1) + '\n    ISPname,' + m.group(2), sql)
+    return sql
+
+
+_CASE_MODE_RE = re.compile(
+    r'\n[ \t]*\bCASE\s+"[^"]+"\s*\n'    # \n + indent + CASE "$mode"\n
+    r'\s*WHEN\s+"pdf"\s+THEN\s+(.+)\n'  # WHEN "pdf" THEN <pdf_expr>  → group 1
+    r'\s*WHEN\s+"peak"\s+THEN\s+.+\n'   # WHEN "peak" THEN ...        → skip
+    r'\s*ELSE\s+(.+)\n'                  # ELSE <cdf_expr>             → group 2
+    r'\s*END\s+AS\s+data,',             # END AS data,
+    re.IGNORECASE,
+)
+_MODE_HAVING_RE = re.compile(
+    r'\s*OR\s*\("[^"]*"\s*=\s*"cdf"\)',  # OR ("$mode" = "cdf")
+    re.IGNORECASE,
+)
+
+
+def make_combined_sql(sql: str) -> str:
+    """Replace the mode-dispatch CASE block with explicit pdf and cdf columns.
+
+    Two transformations:
+
+    1. ``CASE "$mode" WHEN "pdf" THEN <P> … ELSE <C> END AS data`` →
+       ``<P> AS pdf,`` and ``<C> AS cdf,`` on separate lines.
+
+    2. Remove the ``OR ("$mode" = "cdf")`` clause from HAVING so that all
+       histogram bins are returned regardless of binSize — necessary for an
+       accurate CDF window function.  At the default binSize=50 this is a
+       no-op (thinning is already disabled); at lower binSize values the PDF
+       resolution increases slightly, which is acceptable in a combined chart.
+    """
+    def _replace_case(m):
+        pdf = m.group(1).strip()
+        cdf = m.group(2).strip()
+        return f'\n    {pdf} AS pdf,\n    {cdf} AS cdf,'
+
+    sql = _CASE_MODE_RE.sub(_replace_case, sql)
+    sql = _MODE_HAVING_RE.sub('', sql)
+    return sql
+
+
+def plotly_combined_figure(
+    df: pd.DataFrame,
+    layout: dict | None = None,
+    title: str = "",
+) -> go.Figure:
+    """Build a combined PDF + CDF figure with two vertically offset Y axes.
+
+    Expects a DataFrame with columns ``bin``, ``pdf``, ``cdf``, ``siteName``
+    (produced by :func:`make_combined_sql` + :func:`make_bulk_sql`).  One line
+    per M-Lab site appears on each sub-axis; the PDF sub-axis sits in the
+    bottom 42 % of the plot area, the CDF sub-axis in the top 42 %.  A 16 %
+    gap between them prevents overlap.  The legend is keyed to the site names
+    and shared between both sub-axes (each site appears once).
+    """
+    fig = go.Figure()
+    if df is not None and not df.empty and 'pdf' in df.columns:
+        for site in sorted(df['siteName'].dropna().unique(), key=str):
+            sub = df[df['siteName'] == site]
+            fig.add_trace(go.Scatter(
+                x=sub['bin'], y=sub['pdf'], name=str(site),
+                mode='lines', line=dict(width=1),
+                yaxis='y', legendgroup=str(site), showlegend=True,
+            ))
+            fig.add_trace(go.Scatter(
+                x=sub['bin'], y=sub['cdf'], name=str(site),
+                mode='lines', line=dict(width=1),
+                yaxis='y2', legendgroup=str(site), showlegend=False,
+            ))
+
+    xaxis = copy.deepcopy(layout.get('xaxis', {})) if layout else {}
+    # Gap between PDF (bottom) and CDF (top) is [0.44, 0.56] — 12% of plot
+    # area. The legend is anchored inside that gap to avoid consuming extra
+    # vertical space above or below the subplots.
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=11), pad=dict(t=0, b=0)),
+        height=600,
+        showlegend=True,
+        legend=dict(
+            orientation='h', x=0.5, y=0.50,
+            xanchor='center', yanchor='middle',
+            font=dict(size=9),
+        ),
+        margin=dict(l=50, r=55, t=22, b=15),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='grey'),
+        xaxis=xaxis,
+        yaxis=dict(
+            title=dict(text='PDF', font=dict(size=10)),
+            domain=[0, 0.44], side='left',
+            gridcolor='#333', rangemode='nonnegative',
+            tickfont=dict(size=9),
+        ),
+        yaxis2=dict(
+            title=dict(text='CDF', font=dict(size=10)),
+            domain=[0.56, 1.0], range=[0, 1],
+            side='right', gridcolor='#333',
+            tickfont=dict(size=9),
+        ),
+    )
+    return fig
+
+
+def plotly_grouped_figure(
+    df: pd.DataFrame,
+    layout: dict | None = None,
+    title: str = "",
+) -> go.Figure:
+    """Rebuild an ``ae3e-plotly-panel`` figure from a 3-column result frame.
+
+    Replicates the dashboards' client-side panel script: the first column is x,
+    the second is y, and the third is a series name (the M-Lab site). Rows are
+    grouped into one line trace per series, sorted by series name.
+    """
+    fig = go.Figure()
+    if df is not None and not df.empty and df.shape[1] >= 3:
+        xcol, ycol, namecol = df.columns[:3]
+        for name in sorted(df[namecol].dropna().unique(), key=str):
+            sub = df[df[namecol] == name]
+            fig.add_trace(
+                go.Scatter(
+                    x=sub[xcol], y=sub[ycol], name=str(name),
+                    mode="lines", line=dict(width=1),
+                )
+            )
+    if layout:
+        fig.update_layout(**copy.deepcopy(layout))
+    fig.update_layout(title=title, height=380,
+                      margin=dict(l=50, r=20, t=40, b=40),
+                      showlegend=True)
+    return fig

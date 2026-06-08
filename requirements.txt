@@ -1,0 +1,7 @@
+jupyter
+voila
+ipywidgets
+plotly
+nbformat
+google-cloud-bigquery
+pandas
