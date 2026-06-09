@@ -95,6 +95,17 @@ _METRIC_LAYOUTS = {
 # method string from the sub-selector widgets before any BQ calls are made.
 # Substituted verbatim into the notebook cell via str.format(); f-string
 # expressions inside are not processed by .format() so no escaping is needed.
+# Code injected before the table display in fleet notebooks.
+# Renders a global map when metros or sites are in the display selection.
+_FLEET_BEFORE_TABLE = """\
+                    _display_sel = ctx.get("display") or []
+                    if isinstance(_display_sel, str): _display_sel = [_display_sel]
+                    if any(d in _display_sel for d in ("metros", "sites")):
+                        _map_df = _df[_df["lat"].notna() & _df["long"].notna()].copy()
+                        if not _map_df.empty:
+                            display(go.FigureWidget(rt.fleet_map(_map_df)))
+"""
+
 _EXP_METHOD_PREAMBLE = """\
     # Build composite BQ method string from sub-selector widgets.
     _ms    = ctx.get("methodsrc", "cached")
@@ -209,6 +220,26 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
     return out
 
 
+def _filter_for_fleet(variables: list[dict]) -> list[dict]:
+    """Minimal filter for table-only dashboards (e.g. Fleet and Egress).
+
+    The only transformation needed is expanding Grafana's ``$__all`` sentinel
+    in any multi-select variable to its real option values so the Python widget
+    gets a concrete default selection.
+    """
+    out = []
+    for v in variables:
+        v = dict(v)
+        cur = (v.get("current") or {}).get("value")
+        if v.get("multi") and isinstance(cur, list) and "$__all" in cur:
+            v["options"] = [o for o in v.get("options", [])
+                            if o["value"] != "$__all"]
+            # Default to metros only (not all levels).
+            v["current"] = {"value": ["metros"]}
+        out.append(v)
+    return out
+
+
 def _add_metrics_var(variables: list[dict]) -> list[dict]:
     """Insert the metrics multi-select chooser before binSize."""
     metrics_var = {
@@ -251,6 +282,9 @@ def serialize_variables(dashboard, flavor: str = 'prod') -> list[dict]:
         })
     if flavor == 'exp':
         filtered = _filter_for_exp(out)
+    elif flavor == 'fleet':
+        filtered = _filter_for_fleet(out)
+        return filtered          # no metrics chooser for table-only dashboards
     else:
         filtered = _filter_for_cached(out)
     return _add_metrics_var(filtered)
@@ -388,7 +422,9 @@ def render(_=None):
         display(Markdown(f"### {{DIAGNOSTIC_TITLE}}"))
         display(_diagnostics(ctx, from_dt, to_dt))
 
-        table_style = ctx.get("table_style", "none")
+        # Default to "Summary" when table_style is absent (e.g. fleet dashboard).
+        table_style = ctx.get("table_style",
+                               "Summary" if SUMMARY_PANELS else "none")
         if table_style != "none":
             # Map table_style → verbose value expected by the regional_report SQL.
             _sctx = dict(ctx)
@@ -397,7 +433,12 @@ def render(_=None):
                 display(Markdown("### " + qb.interpolate(p["title"], ctx)))
                 sql = qb.interpolate(p["sql"], _sctx, from_dt=from_dt, to_dt=to_dt)
                 try:
-                    display(query(sql))
+                    _df = query(sql)
+{before_table}                    display(HTML(
+                        '<div style="height:500px;overflow:auto">'
+                        + _df.to_html(index=False, na_rep="")
+                        + '</div>'
+                    ))
                 except Exception as exc:
                     display(HTML(f"<pre>query failed: {{exc}}</pre>"))
 
@@ -465,6 +506,7 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     info = classify_panels(dashboard)
     variables = serialize_variables(dashboard, flavor=flavor)
     method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp' else ""
+    before_table   = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
     nb = new_notebook()
     intro = info["intro"].strip()
     header = f"# {dashboard.title}\n\n" + (intro if intro else "")
@@ -479,6 +521,7 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
             repeat_var=info["repeat_var"],
             diagnostic_title=info["diagnostic_title"],
             method_preamble=method_preamble,
+            before_table=before_table,
         )),
         new_code_cell(_DISPLAY),
     ]

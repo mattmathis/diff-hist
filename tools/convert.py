@@ -26,7 +26,12 @@ from converter.parser import parse_dashboard           # noqa: E402
 
 
 def _detect_flavor(dashboard) -> str:
-    return 'exp' if any(v.name == 'methodsrc' for v in dashboard.variables) else 'prod'
+    var_names = {v.name for v in dashboard.variables}
+    if 'methodsrc' in var_names:
+        return 'exp'
+    if 'method' in var_names:
+        return 'prod'
+    return 'fleet'
 
 
 def main() -> int:

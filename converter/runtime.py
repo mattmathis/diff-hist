@@ -12,6 +12,7 @@ the generated setup cell handles that.
 from __future__ import annotations
 
 import copy
+import math
 import re
 
 import pandas as pd
@@ -497,6 +498,116 @@ def plotly_combined_figure(
             side='right', gridcolor='#333',
             tickfont=dict(size=9),
         ),
+    )
+    return fig
+
+
+def fleet_map(df: pd.DataFrame) -> go.Figure:
+    """World map — one marker per metro, combining metro summary and site detail.
+
+    Row classification (from ``level`` column):
+    - ``"Subtotal by Metro"``     — metro aggregate (marker position + cost label)
+    - ``"Subtotal by Metro-SKU"`` — per-deployment breakdown (ignored for display)
+    - ``"Site"``                  — individual site row (per-site hover lines)
+
+    Hover content per metro:
+    - Metro total line: servers, T/day, TB/mo, Mbps, cost  ($/day)
+    - Per-site lines (if present): T/day, TB/mo, Mbps  (no cost)
+
+    Markers are coloured by log₁₀(tests/day) on the Plasma scale.
+    """
+    df = df.dropna(subset=['lat', 'long']).copy()
+    if df.empty:
+        return go.Figure()
+
+    metro_rows = df[df['level'] == 'Subtotal by Metro']
+    site_rows  = df[df['level'] == 'Site'].copy()
+    # For site rows the 'metro' column holds the site code (e.g. 'nbo01');
+    # strip to the first 3 characters to recover the metro code.
+    site_rows['_metro'] = site_rows['metro'].str[:3]
+
+    all_metros = metro_rows['metro'].dropna().unique()
+    if not len(all_metros):
+        all_metros = site_rows['_metro'].dropna().unique()
+
+    lats, lons, texts, colors = [], [], [], []
+
+    for metro in sorted(all_metros):
+        mr = metro_rows[metro_rows['metro'] == metro]
+        sr = site_rows[site_rows['_metro'] == metro].sort_values('TpD', ascending=False)
+
+        # Marker position from the metro aggregate row
+        if not mr.empty:
+            lat, lon = float(mr['lat'].iloc[0]), float(mr['long'].iloc[0])
+            tpd_color = float(mr['TpD'].iloc[0])
+        elif not sr.empty:
+            lat, lon = float(sr['lat'].mean()), float(sr['long'].mean())
+            tpd_color = float(sr['TpD'].sum())
+        else:
+            continue
+
+        lines = []
+
+        # --- Metro total ---
+        if not mr.empty:
+            r   = mr.iloc[0]
+            loc = str(r.get('Loc', '') or '').strip()
+            lines.append(f"<b>{metro} — {loc}</b>")
+            lines.append(
+                f"{int(r['servers'])} servers | "
+                f"{r['TpD']:,.0f} T/day | "
+                f"{r['TBpM']:,.1f} TB/mo | "
+                f"{r['Mbps']:,.0f} Mbps"
+            )
+            lines.append(f"${r['DpD']:,.0f}/day")
+
+        # --- Individual sites (site code is in the 'metro' column for Site rows) ---
+        if not sr.empty:
+            lines.append("─" * 28)
+            for _, s in sr.iterrows():
+                site_id = str(s.get('metro', '') or metro)
+                lines.append(
+                    f"  {site_id}: "
+                    f"{s['TpD']:,.0f} T/day | "
+                    f"{s['TBpM']:,.1f} TB/mo | "
+                    f"{s['Mbps']:,.0f} Mbps"
+                )
+
+        lats.append(lat)
+        lons.append(lon)
+        texts.append("<br>".join(lines))
+        colors.append(math.log10(tpd_color + 1))
+
+    if not lats:
+        return go.Figure()
+
+    fig = go.Figure(go.Scattergeo(
+        lat=lats, lon=lons, text=texts,
+        mode='markers',
+        marker=dict(
+            size=8,
+            color=colors,
+            colorscale='Plasma',
+            showscale=True,
+            colorbar=dict(title="log₁₀(T/day)", thickness=12, len=0.6),
+            opacity=0.85,
+        ),
+        hoverinfo='text',
+    ))
+    fig.update_layout(
+        geo=dict(
+            showland=True,      landcolor='#1a1a2e',
+            showocean=True,     oceancolor='#0f0e17',
+            showcountries=True, countrycolor='#444',
+            showcoastlines=True, coastlinecolor='#444',
+            bgcolor='rgba(0,0,0,0)',
+            projection_type='natural earth',
+        ),
+        height=700,
+        margin=dict(l=0, r=0, t=5, b=0),
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='grey'),
+        showlegend=False,
     )
     return fig
 
