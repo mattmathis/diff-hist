@@ -26,6 +26,48 @@ from . import runtime as rt
 _HIDDEN = 2
 
 
+class CheckboxGroup:
+    """A group of ``Checkbox`` widgets that behaves like a multi-select.
+
+    Exposes ``.value`` (tuple of selected values) and ``.observe()`` so it is
+    a drop-in replacement for ``SelectMultiple`` in :class:`Controls`.  Use
+    ``.widget`` to get the displayable ``VBox``.
+    """
+
+    def __init__(self, options: list[tuple], description: str = ""):
+        self._checks: dict[str, widgets.Checkbox] = {
+            val: widgets.Checkbox(
+                value=False, description=lbl, indent=False,
+                layout=widgets.Layout(width="auto"),
+            )
+            for lbl, val in options
+        }
+        label = widgets.HTML(f"<b>{description}</b>" if description else "")
+        self.widget = widgets.VBox(
+            ([label] if description else []) + list(self._checks.values())
+        )
+        self._callbacks: list = []
+        for cb in self._checks.values():
+            cb.observe(self._fire, names="value")
+
+    def _fire(self, _change):
+        for fn in self._callbacks:
+            fn({"name": "value", "new": self.value})
+
+    @property
+    def value(self) -> tuple:
+        return tuple(v for v, cb in self._checks.items() if cb.value)
+
+    @value.setter
+    def value(self, vals):
+        s = set(vals) if vals else set()
+        for val, cb in self._checks.items():
+            cb.value = val in s
+
+    def observe(self, callback, names="value"):
+        self._callbacks.append(callback)
+
+
 def _v_to_dict(v) -> dict:
     """Convert a ``Variable`` dataclass to the serialized dict format."""
     return {
@@ -100,11 +142,30 @@ class Controls:
                     w = widgets.Dropdown(description=label, style=style, layout=layout)
                 w._var_description = desc
                 self.widgets[name] = w
+            elif v["type"] == "textbox":
+                w = widgets.Text(
+                    value=str((v.get("current") or {}).get("value", "") or ""),
+                    description=label,
+                    style=style, layout=layout,
+                )
+                w._var_description = desc
+                self.widgets[name] = w
             else:  # custom (and anything else with an option list)
                 opts = [(o.get("text", o.get("value")), o.get("value"))
-                        for o in (v.get("options") or [])] or None
-                w = widgets.Dropdown(options=opts, description=label,
-                                     style=style, layout=layout)
+                        for o in (v.get("options") or [])] or []
+                if v.get("multi"):
+                    if v.get("widget_style") == "checkboxes":
+                        w = CheckboxGroup(opts, description=label)
+                    else:
+                        w = widgets.SelectMultiple(
+                            options=opts,
+                            description=label,
+                            rows=min(6, max(2, len(opts))),
+                            style=style, layout=layout,
+                        )
+                else:
+                    w = widgets.Dropdown(options=opts or None, description=label,
+                                         style=style, layout=layout)
                 want = self._preset(name, self.defaults.get(name))
                 _set_value(w, want)
                 w._var_description = desc
@@ -175,13 +236,22 @@ class Controls:
     def _layout_box(self):
         rows = [widgets.HTML("<b>Dashboard controls</b>")]
         for name, w in self.widgets.items():
-            rows.append(w)
+            rows.append(getattr(w, "widget", w))
         return widgets.VBox(rows)
 
 
 def _set_value(w, want, valid=None):
     """Best-effort assignment that tolerates missing/invalid selections."""
-    is_multi = isinstance(w, widgets.SelectMultiple)
+    is_multi = isinstance(w, (widgets.SelectMultiple, CheckboxGroup))
+    if isinstance(w, CheckboxGroup):
+        # CheckboxGroup has a fixed option set; filter want to valid values.
+        if valid is not None:
+            valid_set = set(valid)
+            wants = want if isinstance(want, (list, tuple)) else ([want] if want else [])
+            w.value = tuple(x for x in wants if x in valid_set)
+        else:
+            w.value = tuple(want) if isinstance(want, (list, tuple)) else ((want,) if want else ())
+        return
     allowed = set(valid) if valid is not None else {
         val for _, val in (w.options or [])
     }

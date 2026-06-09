@@ -82,7 +82,35 @@ def _panel_spec(panel, var_names: set[str]) -> dict:
 # Options supported by access_ndt7_cached_histograms (partition map in its DDL).
 # Used to prune dropdown choices that would silently fall back to MinRTT.
 _CACHED_TABLE_FIELDS = {'MinRTT', 'MeanThroughputMbps', 'LossRate', 'linearMinRTT'}
-_CACHED_FIELD_OPTIONS = {'none', 'MinRTT', 'MeanThroughputMbps', 'LossRate'}
+
+# Per-metric Plotly x-axis layout.  Ordered — determines left-to-right figure order.
+_METRIC_LAYOUTS = {
+    "MeanThroughputMbps": {"type": "log",    "autorange": False, "range": [-0.3, 3.3], "gridcolor": "#333"},
+    "MinRTT":             {"type": "log",    "autorange": False, "range": [-0.3, 3.0], "gridcolor": "#333"},
+    "linearMinRTT":       {"type": "linear", "autorange": False, "range": [0, 300],    "gridcolor": "#333"},
+    "LossRate":           {"type": "log",    "autorange": True,                        "gridcolor": "#333"},
+}
+
+# Python code injected into the exp render() function to build the composite
+# method string from the sub-selector widgets before any BQ calls are made.
+# Substituted verbatim into the notebook cell via str.format(); f-string
+# expressions inside are not processed by .format() so no escaping is needed.
+_EXP_METHOD_PREAMBLE = """\
+    # Build composite BQ method string from sub-selector widgets.
+    _ms    = ctx.get("methodsrc", "cached")
+    _loc   = ctx.get("locate", "showLocate")
+    _sub   = ctx.get("sub_method", "default")
+    _extra = (ctx.get("extra_flags") or "").strip()
+    if _sub == "showName=":
+        _sub = f"showName={ctx.get('clientname', '')}"
+    if _ms != "cached":
+        _parts = [_ms, _loc, _sub]
+        if _extra:
+            _parts.append(_extra)
+        ctx["method"] = "-".join(p for p in _parts if p and p != "default")
+    else:
+        ctx["method"] = "cached"
+"""
 
 
 def _filter_for_cached(variables: list[dict]) -> list[dict]:
@@ -113,22 +141,98 @@ def _filter_for_cached(variables: list[dict]) -> list[dict]:
             if cur not in _CACHED_TABLE_FIELDS:
                 v['current'] = {'value': v['options'][0]['value']} if v['options'] else {}
         elif name == 'field':
-            v['options'] = [o for o in v['options']
-                            if o['value'] in _CACHED_FIELD_OPTIONS]
-            cur = (v.get('current') or {}).get('value')
-            if cur not in _CACHED_FIELD_OPTIONS:
-                v['current'] = {'value': 'none'}
+            continue  # superseded by the metrics multi-select chooser
+        elif name == 'verbose':
+            # Replace the true/false toggle with a three-way table-style chooser.
+            v['name'] = 'table_style'
+            v['label'] = 'Table'
+            v['description'] = 'Summary table display style.'
+            v['options'] = [
+                {'text': 'none',    'value': 'none'},
+                {'text': 'Summary', 'value': 'Summary'},
+                {'text': 'Verbose', 'value': 'Verbose'},
+            ]
+            v['current'] = {'value': 'none'}
         out.append(v)
     return out
 
 
-def serialize_variables(dashboard) -> list[dict]:
+def _filter_for_exp(variables: list[dict]) -> list[dict]:
+    """Variable filter for the experimental dashboard.
+
+    Drops dashboard-derived variables that are replaced by Python logic
+    (composite ``method``) or superseded by the metrics chooser.  Adds
+    ``sub_method`` and ``extra_flags`` sub-selector controls.
+    """
+    out = []
+    for v in list(variables):
+        v = dict(v)
+        name = v['name']
+        if name in ('mode', 'method', 'field', 'verbose'):
+            continue  # handled elsewhere or superseded
+        elif name == 'region':
+            v['default_select'] = 'all'
+        elif name == 'ClientISP':
+            v['default_select'] = 'half'
+        out.append(v)
+
+    # Sub-method flag selector
+    out.append({
+        "name": "sub_method",
+        "type": "custom",
+        "label": "Sub-method",
+        "description": "Method sub-selector flag passed to the BQ backend.",
+        "hide": 0,
+        "multi": False,
+        "options": [
+            {"text": "default",    "value": "default"},
+            {"text": "showIPv",    "value": "showIPv"},
+            {"text": "showEarly",  "value": "showEarly"},
+            {"text": "showNames",  "value": "showNames"},
+            {"text": "showName=…", "value": "showName="},
+        ],
+        "current": {"value": "default"},
+        "query_sql": None,
+    })
+    # Free-text extra flags (appended to method string)
+    out.append({
+        "name": "extra_flags",
+        "type": "textbox",
+        "label": "Extra flags",
+        "description": "Arbitrary subselector flags appended to the method string.",
+        "hide": 0,
+        "multi": False,
+        "options": [],
+        "current": {"value": ""},
+        "query_sql": None,
+    })
+    return out
+
+
+def _add_metrics_var(variables: list[dict]) -> list[dict]:
+    """Insert the metrics multi-select chooser before binSize."""
+    metrics_var = {
+        "name": "metrics",
+        "type": "custom",
+        "label": "Metrics",
+        "description": "Select which metrics to plot.",
+        "hide": 0,
+        "multi": True,
+        "options": [{"text": k, "value": k} for k in _METRIC_LAYOUTS],
+        "current": {"value": ["MeanThroughputMbps"]},
+        "query_sql": None,
+    }
+    idx = next((i for i, v in enumerate(variables) if v["name"] == "binSize"),
+               len(variables))
+    variables.insert(idx, metrics_var)
+    return variables
+
+
+def serialize_variables(dashboard, flavor: str = 'prod') -> list[dict]:
     """Bake dashboard variable metadata into a plain list of dicts.
 
-    All fields needed by :class:`Controls` and :func:`default_values` are
-    preserved; runtime-only fields (``refs``) are dropped. Options that are
-    unsupported for the cached histogram path are pruned by
-    :func:`_filter_for_cached`.
+    ``flavor`` selects the variable filter: ``'prod'`` applies
+    :func:`_filter_for_cached`; ``'exp'`` applies :func:`_filter_for_exp`.
     """
     out = []
     for v in dashboard.variables:
@@ -145,7 +249,11 @@ def serialize_variables(dashboard) -> list[dict]:
             "current": {"value": v.current.get("value")} if v.current else {},
             "query_sql": v.query_sql,
         })
-    return _filter_for_cached(out)
+    if flavor == 'exp':
+        filtered = _filter_for_exp(out)
+    else:
+        filtered = _filter_for_cached(out)
+    return _add_metrics_var(filtered)
 
 
 def classify_panels(dashboard):
@@ -250,7 +358,7 @@ w_run = widgets.Button(description="Run / Refresh", button_style="primary", icon
 _RENDER = '''\
 # --- Panels (converted from the dashboard) ---
 SUMMARY_PANELS  = json.loads(r"""{summary_json}""")
-REPEAT_PANELS   = json.loads(r"""{repeat_json}""")
+METRIC_LAYOUTS  = json.loads(r"""{metric_layouts_json}""")
 REPEAT_VAR      = {repeat_var!r}
 DIAGNOSTIC_TITLE = {diagnostic_title!r}
 
@@ -266,7 +374,7 @@ def _diagnostics(ctx, from_dt, to_dt):
 
 def render(_=None):
     ctx = ctrl.context()
-    to_dt = datetime.combine(date.today(), time())
+{method_preamble}    to_dt = datetime.combine(date.today(), time())
     from_dt = to_dt - timedelta(days=7)
     cache = {{}}
 
@@ -280,54 +388,66 @@ def render(_=None):
         display(Markdown(f"### {{DIAGNOSTIC_TITLE}}"))
         display(_diagnostics(ctx, from_dt, to_dt))
 
-        for p in SUMMARY_PANELS:
-            display(Markdown("### " + qb.interpolate(p["title"], ctx)))
-            sql = qb.interpolate(p["sql"], ctx, from_dt=from_dt, to_dt=to_dt)
-            try:
-                display(query(sql))
-            except Exception as exc:
-                display(HTML(f"<pre>query failed: {{exc}}</pre>"))
+        table_style = ctx.get("table_style", "none")
+        if table_style != "none":
+            # Map table_style → verbose value expected by the regional_report SQL.
+            _sctx = dict(ctx)
+            _sctx["verbose"] = "true" if table_style == "Verbose" else "false"
+            for p in SUMMARY_PANELS:
+                display(Markdown("### " + qb.interpolate(p["title"], ctx)))
+                sql = qb.interpolate(p["sql"], _sctx, from_dt=from_dt, to_dt=to_dt)
+                try:
+                    display(query(sql))
+                except Exception as exc:
+                    display(HTML(f"<pre>query failed: {{exc}}</pre>"))
 
         repeats = ctx.get(REPEAT_VAR) or []
         if isinstance(repeats, str):
             repeats = [repeats]
 
-        # One BQ query per metric covers all selected client ISPs.
-        # The WHERE regex matches by ASN (leading digits + space) — stable
-        # across name-text changes.  Python then filters per ISP for each plot.
-        bulk = {{}}
-        bulk_ctx = dict(ctx)
-        bulk_ctx[REPEAT_VAR] = qb.Raw(rt.asn_regex(repeats))
-        for p in REPEAT_PANELS:
-            if p.get("skip_if_field_none") and ctx.get("field") == "none":
-                continue
-            sql_tmpl = rt.rewrite_histogram_call(p["sql"], ctx.get("method", "cached"))
-            sql_tmpl = rt.make_combined_sql(rt.make_bulk_sql(sql_tmpl))
-            sql = qb.interpolate(sql_tmpl, bulk_ctx,
-                                 from_dt=from_dt, to_dt=to_dt)
+        selected_metrics = ctx.get("metrics") or []
+        if isinstance(selected_metrics, str):
+            selected_metrics = [selected_metrics]
+
+        # One Python call per selected metric fetches data for all client ISPs.
+        bulk_by_metric = {{}}
+        _site_regex = qb.format_regex(ctx.get("region") or [])
+        _isp_regex  = rt.asn_regex(repeats)
+        for metric in selected_metrics:
             try:
-                bulk[p["id"]] = query(sql)
+                bulk_by_metric[metric] = rt.fetch_histograms(
+                    client,
+                    method=ctx.get("method", "cached"),
+                    field=metric,
+                    site_regex=_site_regex,
+                    isp_count=int(ctx.get("ISPcount", 10)),
+                    bin_size=int(ctx.get("binSize", 50)),
+                    x_axis=ctx.get("xAxis", "none"),
+                    from_dt=from_dt,
+                    to_dt=to_dt,
+                    isp_regex=_isp_regex,
+                    dataset=ctx.get("dataset",
+                                    "mlab-collaboration.mm_preproduction"),
+                )
             except Exception as exc:
-                bulk[p["id"]] = exc
+                bulk_by_metric[metric] = exc
 
         for value in repeats:
             asn = str(value).split()[0]
             display(HTML(f"<h3>{{REPEAT_VAR}}: {{value}}</h3>"))
             figs = []
-            for p in REPEAT_PANELS:
-                if p.get("skip_if_field_none") and ctx.get("field") == "none":
-                    continue
-                title = qb.interpolate(p["title"], dict(ctx, **{{REPEAT_VAR: value}}))
-                df_all = bulk.get(p["id"])
+            for metric in selected_metrics:
+                df_all = bulk_by_metric.get(metric)
                 if isinstance(df_all, Exception):
-                    figs.append(widgets.HTML(f"<b>{{title}}</b><pre>{{df_all}}</pre>"))
+                    figs.append(widgets.HTML(f"<b>{{metric}}</b><pre>{{df_all}}</pre>"))
                     continue
                 df = df_all[df_all["ISPname"].str.startswith(asn + " ")]
                 try:
-                    fig = rt.plotly_combined_figure(df, p["layout"], title=title)
+                    fig = rt.plotly_combined_figure(
+                        df, {{"xaxis": METRIC_LAYOUTS.get(metric, {{}})}}, title=metric)
                     figs.append(go.FigureWidget(fig))
                 except Exception as exc:
-                    figs.append(widgets.HTML(f"<b>{{title}}</b><pre>{{exc}}</pre>"))
+                    figs.append(widgets.HTML(f"<b>{{metric}}</b><pre>{{exc}}</pre>"))
             if figs:
                 display(widgets.HBox(figs, layout=widgets.Layout(flex_flow="row wrap")))
 
@@ -341,9 +461,10 @@ display(widgets.VBox([ctrl.box, w_run, out]))
 '''
 
 
-def build_notebook(dashboard) -> nbformat.NotebookNode:
+def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     info = classify_panels(dashboard)
-    variables = serialize_variables(dashboard)
+    variables = serialize_variables(dashboard, flavor=flavor)
+    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp' else ""
     nb = new_notebook()
     intro = info["intro"].strip()
     header = f"# {dashboard.title}\n\n" + (intro if intro else "")
@@ -354,9 +475,10 @@ def build_notebook(dashboard) -> nbformat.NotebookNode:
         new_code_cell(_CONTROLS),
         new_code_cell(_RENDER.format(
             summary_json=_compact_json(info["summary"]),
-            repeat_json=_compact_json(info["repeat_panels"]),
+            metric_layouts_json=_compact_json(_METRIC_LAYOUTS),
             repeat_var=info["repeat_var"],
             diagnostic_title=info["diagnostic_title"],
+            method_preamble=method_preamble,
         )),
         new_code_cell(_DISPLAY),
     ]
@@ -369,8 +491,9 @@ def build_notebook(dashboard) -> nbformat.NotebookNode:
 
 
 def write_notebook(dashboard, dashboard_path: str,
-                   outdir: str = "notebooks.stage") -> Path:
-    nb = build_notebook(dashboard)
+                   outdir: str = "notebooks.stage",
+                   flavor: str = 'prod') -> Path:
+    nb = build_notebook(dashboard, flavor=flavor)
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{_slug(dashboard.title)}.ipynb"

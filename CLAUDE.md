@@ -30,15 +30,20 @@ project/
 ├── CLAUDE.md
 ├── converter/
 │   ├── parser.py           # Parse Grafana JSON → Dashboard/Panel/Variable model
-│   ├── query_builder.py    # rawSql variable interpolation; Raw passthrough class
-│   ├── runtime.py          # BQ client, run_query, variable_options,
-│   │                       #   plotly_combined_figure, make_bulk_sql,
-│   │                       #   make_combined_sql, rewrite_histogram_call
+│   ├── query_builder.py    # rawSql variable interpolation; Raw passthrough class;
+│   │                       #   format_regex (Grafana-exact escaping)
+│   ├── runtime.py          # BQ client, run_query, variable_options;
+│   │                       #   fetch_histograms (Python dispatch + densification);
+│   │                       #   plotly_combined_figure (PDF+CDF dual-axis figure);
+│   │                       #   asn_regex; legacy SQL-transform helpers
 │   ├── notebook_builder.py # Assemble .ipynb; serialize/filter variables;
-│   │                       #   _compact_json; _filter_for_cached
-│   └── widget_builder.py   # Controls class: ipywidgets + chained query dropdowns
+│   │                       #   _filter_for_cached, _filter_for_exp;
+│   │                       #   _compact_json; build_notebook(flavor=)
+│   └── widget_builder.py   # Controls class: ipywidgets + chained query dropdowns;
+│                           #   CheckboxGroup; textbox (Text widget) support
 ├── tools/
 │   ├── convert.py          # Driver: parse dashboard → write notebooks.stage/
+│   │                       #   auto-detects flavor (prod/exp) from variables
 │   └── gen_docs.py         # Fetch BQ routine/table definitions → docs/functions/*.md
 ├── dashboards/             # Input: Grafana dashboard JSON files
 ├── docs/
@@ -54,6 +59,16 @@ The converter **always writes to `notebooks.stage/`**, never to `notebooks/`.
 manually merges staged output into `notebooks/`. Never write converter output
 directly into `notebooks/`.
 
+## Dashboards
+
+| File | Flavor | Notes |
+|------|--------|-------|
+| `Regional Details Dashboard-*.json` | `prod` | Intended for public use; cached histograms only |
+| `Experimental Regional Details Dashboard.json` | `exp` | Developer use; multiple BQ backends; composite method string |
+
+Flavor is auto-detected by `tools/convert.py` from the presence of a `methodsrc`
+variable. Override with `--flavor prod|exp`.
+
 ## Workflow
 
 ```bash
@@ -63,7 +78,7 @@ directly into `notebooks/`.
 python tools/gen_docs.py "dashboards/<dashboard>.json"
 #    → writes docs/functions/*.md; review the derived Description sections
 
-# 3. Generate the notebook
+# 3. Generate the notebook (flavor auto-detected)
 python tools/convert.py "dashboards/<dashboard>.json"
 #    → writes notebooks.stage/<slug>.ipynb
 
@@ -89,7 +104,7 @@ url_params = {k: vs[0] if len(vs)==1 else vs
               for k, vs in urllib.parse.parse_qs(qs).items()}
 ```
 
-Example URL (single-value params only; multi-select can't be set this way):
+Example URL (single-value params only; multi-select requires `DASH_PRESETS`):
 ```
 http://localhost:8866/voila/render/regional_details_dashboard.ipynb?anchor=lga&radius=100&ISPcount=10&binSize=25
 ```
@@ -99,87 +114,88 @@ For scripted or test overrides set `DASH_PRESETS` to a JSON object:
 DASH_PRESETS='{"anchor":"lga","region":["lga04","lga05"]}' voila notebooks/<slug>.ipynb
 ```
 
-## Grafana JSON Structure (Key Fields)
-
-- **`templating.list`** — template variables (dropdowns); each has `name`, `type`,
-  `options`, `current`. Query-type variables carry `query.rawSql` (BigQuery SQL that
-  populates the dropdown options).
-- **`panels`** — `type`, `title`, `targets`, `fieldConfig`. Types seen: `text`
-  (markdown), `table`, `ae3e-plotly-panel` (Plotly figure whose trace shaping was a
-  client-side JS script — reimplemented in `runtime.plotly_combined_figure`), `row`
-  (section header, may carry a `repeat` variable name).
-- **`targets`** — each carries `rawSql` with `$var` / `${var}` Grafana interpolation
-  placeholders and format modifiers: `${var:regex}`, `${var:raw}`,
-  `${__from:date:iso}`, `${__to:date:iso}`.
-
 ## Key Architecture Decisions
 
-### Variable interpolation (`converter/query_builder.py`)
-- `interpolate(sql, values, from_dt, to_dt)` substitutes all `${var}` / `$var`
-  references. Default `missing="keep"` silently preserves placeholders in SQL
-  comments.
-- `${var:regex}` — Grafana-exact escaping (spaces not escaped; only regex
-  metacharacters). Multi-value list → `(a|b|c)`.
-- `Raw(value)` — wrap a pre-built string to bypass all format escaping (used for
-  the bulk-ISP ASN regex).
+### Python histogram dispatch (`runtime.fetch_histograms`)
 
-### Chained query dropdowns (`converter/widget_builder.py`)
-- `Controls(variables, client, presets)` builds ipywidgets from serialized
-  variable dicts and wires dependency observers by inspecting each variable's
-  `query_sql` for references to other variable names.
-- `default_select: "all" | "half"` — set in serialized VARIABLES to override the
-  Grafana default selection. Applied on initial load and re-applied when the parent
-  variable changes and none of the previous values are still valid (e.g. switching
-  anchor metro).
+Replaces the BQ wrapper functions (`access_ndt7_isp_histograms`,
+`access_exp_ndt7_isp_histograms`) with a single Python function that dispatches on
+`method` to the right BQ backend:
 
-### Bulk ISP queries (`converter/runtime.py`)
-Histogram repeat panels (one plot row per client ISP) previously fired one BQ
-query per ISP. Now a single query fetches all ISPs:
+| method contains | BQ function called | Args |
+|---|---|---|
+| `cached` | `access_ndt7_cached_histograms` | `(field, site_regex, isp_count)` |
+| `exp` / `DS16` / `DS1C` / `DS1V` | `experimental_ndt7_isp_histograms` | `(method, x_axis, bin_size, field, start, end, site_regex)` |
+| anything else (live) | `unified_ndt7_isp_histograms` | same 7 args |
 
-1. **`asn_regex(isp_names)`** — builds `"18881 |28573 |..."` matching on the
-   leading ASN digits + space delimiter (stable across ISP name text changes).
-2. **`rewrite_histogram_call(sql, method)`** — replaces the `access_ndt7_isp_histograms`
-   wrapper call with a direct call to the correct underlying function:
-   - `cached` → `access_ndt7_cached_histograms(field, siteRegex, ispCount)`
-   - `live` → `unified_ndt7_isp_histograms(method, xAxis, binSize, field, startDate, endDate, siteRegex)`
-   - `experimental` → `experimental_ndt7_isp_histograms(...)` (same 7-arg signature)
-3. **`make_bulk_sql(sql)`** — adds `ISPname` to the CTE `SELECT`, `GROUP BY`,
-   every `PARTITION BY siteName` window clause, and the final `SELECT`. Server
-   selection (`siteRegex` / `siteName`) is unchanged.
-4. **`make_combined_sql(sql)`** — replaces the `CASE "$mode" WHEN "pdf"…ELSE…END AS
-   data` block with explicit `AS pdf` and `AS cdf` columns; strips the
-   `OR ("$mode" = "cdf")` HAVING clause so all bins are always returned.
-5. Python then filters `df[df["ISPname"].str.startswith(asn + " ")]` per ISP for
-   each plot.
+After fetching, the function:
+1. **Densifies** sparse backends (experimental/unified) per `(siteName, ISPname)` pair
+   using each pair's own `[minBinIX, maxBinIX]` range (not metro-wide, to avoid
+   outlier-driven zero-padding). Cached data is already dense from BQ.
+2. **Computes `bin`** from `binIX` using the field-appropriate formula.
+3. **Filters** by `isp_regex` (ASN-prefix regex covering all selected ISPs).
+4. **Computes PDF and CDF** per `(siteName, ISPname)` on all bins (accurate CDF).
+5. **Adds `n_tests`** = total hist count per pair (shown in legend labels).
+6. **Applies binSize thinning** to final output if `bin_size < 50`.
 
-Render pipeline per repeat panel:
-```
-rewrite_histogram_call → make_bulk_sql → make_combined_sql → interpolate → run_query
-```
+Returns `(bin, pdf, cdf, siteName, ISPname, n_tests)`. BQ errors propagate
+unchanged so they surface in the notebook output for debugging.
+
+The legacy SQL-transform helpers (`make_bulk_sql`, `make_combined_sql`,
+`rewrite_histogram_call`) remain in `runtime.py` but are no longer called from
+generated notebooks.
 
 ### Combined PDF + CDF figure (`runtime.plotly_combined_figure`)
-Single figure with two vertically offset Y axes:
-- PDF: bottom domain `[0, 0.44]`, left axis, `rangemode="nonnegative"`.
-- CDF: top domain `[0.56, 1.0]`, right axis, fixed range `[0, 1]`.
-- 12% gap between domains; legend anchored inside the gap.
-- One legend entry per M-Lab server site (PDF trace shows, CDF shares the
-  `legendgroup` silently).
 
-### Variable filtering for cached histograms (`notebook_builder._filter_for_cached`)
-At conversion time the serialized VARIABLES are pruned to match what
-`access_ndt7_cached_histograms` supports:
-- `method`: `cached` only.
-- `table_field`: `MinRTT`, `MeanThroughputMbps`, `LossRate`, `linearMinRTT`.
-- `field` (Fourth column): `none`, `MinRTT`, `MeanThroughputMbps`, `LossRate`.
-- `mode` (pdf/cdf selector): removed — CDF and PDF are always shown together.
-- `region` / `ClientISP`: `default_select: "all"` / `"half"` added.
+Single figure with two vertically offset Y axes:
+- PDF: bottom domain `[0, 0.44]`, left axis.
+- CDF: top domain `[0.56, 1.0]`, right axis, fixed range `[0, 1]`.
+- Legend anchored inside the gap; one entry per site showing `"{site} ({n:,})"`.
+- Height 600 px; 2 px line width.
+
+### Variable interpolation (`converter/query_builder.py`)
+
+Used for the summary-table SQL (`regional_report`) only — histogram data is now
+fetched via `fetch_histograms`, not SQL templates.
+
+- `interpolate(sql, values, from_dt, to_dt)` — default `missing="keep"`.
+- `${var:regex}` — Grafana-exact escaping; multi-value → `(a|b|c)`.
+- `format_regex(values)` — used standalone to build `site_regex` for `fetch_histograms`.
+- `Raw(value)` — bypass all format escaping (still used for ASN regex in older paths).
+
+### Chained query dropdowns (`converter/widget_builder.py`)
+
+- `Controls(variables, client, presets)` — wires observer chains by inspecting
+  each query variable's SQL for references to other variable names.
+- `default_select: "all" | "half"` — re-applied when anchor changes invalidates
+  the previous server/ISP selection.
+- `CheckboxGroup` — multi-select implemented as individual Checkbox widgets.
+- `type=textbox` variables → `widgets.Text`.
+
+### Notebook flavors (`notebook_builder.build_notebook(flavor=)`)
+
+**`prod`** — `_filter_for_cached`:
+- `method` locked to `cached`.
+- `table_field` / `field` pruned to cached-supported fields.
+- `mode` removed (always PDF+CDF). `verbose` renamed to `table_style` (none/Summary/Verbose).
+- `metrics` multi-select added (default: `MeanThroughputMbps`).
+
+**`exp`** — `_filter_for_exp`:
+- `methodsrc` (exp-DS16 / exp-DS1C / cached / exp-DS1V), `locate`, `clientname`
+  kept from dashboard.
+- `method` composite variable dropped — the render cell builds it in Python:
+  `f"{methodsrc}-{locate}-{sub_method}[-{extra_flags}]"`.
+- `sub_method` dropdown added (default / showIPv / showEarly / showNames / showName=…).
+- `extra_flags` free-text input added (arbitrary subselector flags appended to method).
+- `metrics` multi-select added. No summary table (table_style=none always).
+- No option pruning — exp backend supports more fields than cached.
 
 ### BQ function documentation (`tools/gen_docs.py`)
-Parses a dashboard JSON, finds every `\`...\`` backtick-quoted BQ resource, fetches
-its definition via `bq show --routine` or `bq show`, probes the output schema
-live (since TVF return types are not in the API), and writes one reviewable
-Markdown file per resource to `docs/functions/`. Re-running overwrites the
-generated files including any hand-edited Description prose.
+
+Parses a dashboard JSON, fetches each backtick-quoted BQ resource via
+`bq show --routine` or `bq show`, probes the live output schema, and writes one
+reviewable Markdown file per resource to `docs/functions/`. Re-running overwrites
+files including hand-edited Description prose.
 
 ## Requirements
 

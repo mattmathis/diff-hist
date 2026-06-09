@@ -291,6 +291,150 @@ def make_combined_sql(sql: str) -> str:
     return sql
 
 
+def _date_str(dt) -> str:
+    return dt.strftime('%Y-%m-%d') if hasattr(dt, 'strftime') else str(dt)[:10]
+
+
+def _bin_value(bin_ix: pd.Series, field: str) -> pd.Series:
+    if 'linear' in field.lower():
+        return bin_ix.astype(float)
+    if 'fine' in field.lower():
+        return 10 ** (bin_ix / 200.0)
+    return 10 ** (bin_ix / 50.0)
+
+
+def _densify(df: pd.DataFrame) -> pd.DataFrame:
+    """Zero-fill missing bins within each (siteName, ISPname) pair's own range.
+
+    Experimental / unified backends return sparse histograms (no zero counts).
+    This fills the gaps so PDF and CDF are continuous, using each pair's own
+    [minBinIX, maxBinIX] range rather than a metro-wide range — avoids forcing
+    many zeros onto pairs that naturally cover a smaller range.
+    """
+    if df.empty:
+        return df
+    meta = [c for c in ('metro', 'site', 'ASnumber', 'ISPrank') if c in df.columns]
+    groups = []
+    for (site_name, isp_name), grp in df.groupby(['siteName', 'ISPname'], sort=False):
+        min_ix = int(grp['binIX'].min())
+        max_ix = int(min(grp['binIX'].max(), min_ix + 1000))
+        full = pd.DataFrame({'binIX': range(min_ix, max_ix + 1)})
+        merged = full.merge(grp[['binIX', 'hist'] + meta].copy(),
+                            on='binIX', how='left')
+        merged['hist'] = merged['hist'].fillna(0).astype(float)
+        merged['siteName'] = site_name
+        merged['ISPname'] = isp_name
+        for col in meta:
+            merged[col] = grp[col].iloc[0]
+        groups.append(merged)
+    return pd.concat(groups, ignore_index=True) if groups else df
+
+
+def _compute_pdfs(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute pdf, cdf, n_tests per (siteName, ISPname).  Keeps binIX so the
+    caller can apply binSize thinning before dropping it."""
+    results = []
+    for (site, isp), grp in df.groupby(['siteName', 'ISPname'], sort=False):
+        grp = grp.sort_values('bin').copy()
+        total = grp['hist'].sum()
+        if total == 0:
+            continue
+        grp['pdf'] = grp['hist'] / total
+        grp['cdf'] = grp['hist'].cumsum() / total
+        grp['n_tests'] = int(total)
+        results.append(
+            grp[['binIX', 'bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests']]
+        )
+    if not results:
+        return pd.DataFrame(
+            columns=['binIX', 'bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests'])
+    return pd.concat(results, ignore_index=True)
+
+
+_EMPTY_HIST = pd.DataFrame(
+    columns=['bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests'])
+
+
+def fetch_histograms(
+    client,
+    method: str,
+    field: str,
+    site_regex: str,
+    isp_count: int,
+    bin_size: int = 50,
+    x_axis: str = "none",
+    from_dt=None,
+    to_dt=None,
+    isp_regex: str | None = None,
+    dataset: str = "mlab-collaboration.mm_preproduction",
+) -> pd.DataFrame:
+    """Fetch, densify, and return PDF + CDF for one metric across all matching ISPs.
+
+    Dispatches on ``method``:
+
+    * ``'%cached%'``          → ``access_ndt7_cached_histograms(field, site_regex, isp_count)``
+      (pre-densified in BQ; 3 args; no dates)
+    * ``'%exp%'`` / ``'%DS%'`` → ``experimental_ndt7_isp_histograms(...)``
+      (sparse; densified in Python)
+    * anything else (live)    → ``unified_ndt7_isp_histograms(...)``
+      (sparse; densified in Python)
+
+    BQ errors propagate unchanged so they surface in the notebook output.
+
+    Returns a DataFrame with columns ``bin``, ``pdf``, ``cdf``, ``siteName``,
+    ``ISPname``, ``n_tests``.
+    """
+    ml = method.lower()
+
+    if 'cached' in ml:
+        sql = (f'SELECT * FROM `{dataset}.access_ndt7_cached_histograms`'
+               f'("{field}", "{site_regex}", {isp_count})')
+        needs_densification = False
+    elif any(k in method for k in ('exp', 'DS16', 'DS1C', 'DS1V')):
+        start, end = _date_str(from_dt), _date_str(to_dt)
+        sql = (f'SELECT * FROM `{dataset}.experimental_ndt7_isp_histograms`'
+               f'("{method}", "{x_axis}", {bin_size}, "{field}", '
+               f'DATE "{start}", DATE "{end}", "{site_regex}")')
+        needs_densification = True
+    else:
+        start, end = _date_str(from_dt), _date_str(to_dt)
+        sql = (f'SELECT * FROM `{dataset}.unified_ndt7_isp_histograms`'
+               f'("{method}", "{x_axis}", {bin_size}, "{field}", '
+               f'DATE "{start}", DATE "{end}", "{site_regex}")')
+        needs_densification = True
+
+    df = run_query(client, sql)
+    if df.empty:
+        return _EMPTY_HIST.copy()
+
+    df = df.rename(columns={'SiteName': 'siteName'})
+
+    if isp_regex:
+        df = df[df['ISPname'].str.match(f"^(?:{isp_regex})", na=False)]
+    if df.empty:
+        return _EMPTY_HIST.copy()
+
+    if needs_densification:
+        df = _densify(df)
+
+    # Recompute bin from binIX — covers densified zero-rows and normalises
+    # any inconsistency between backends.
+    df = df.copy()
+    df['bin'] = _bin_value(df['binIX'], field)
+
+    # PDF / CDF computed on ALL bins so CDF is accurate; thinning comes after.
+    df = _compute_pdfs(df)
+    if df.empty:
+        return _EMPTY_HIST.copy()
+
+    if bin_size < 50 and 'binIX' in df.columns:
+        thinned = (df['binIX'] / 50.0 * bin_size).round().astype(int)
+        mask = df['binIX'] == (thinned * 50.0 / bin_size).round().astype(int)
+        df = df[mask].copy()
+
+    return df.drop(columns=['binIX'], errors='ignore')
+
+
 def plotly_combined_figure(
     df: pd.DataFrame,
     layout: dict | None = None,
@@ -309,15 +453,18 @@ def plotly_combined_figure(
     if df is not None and not df.empty and 'pdf' in df.columns:
         for site in sorted(df['siteName'].dropna().unique(), key=str):
             sub = df[df['siteName'] == site]
+            n = (int(sub['n_tests'].iloc[0])
+                 if 'n_tests' in sub.columns and len(sub) > 0 else None)
+            label = f"{site} ({n:,})" if n is not None else str(site)
             fig.add_trace(go.Scatter(
-                x=sub['bin'], y=sub['pdf'], name=str(site),
-                mode='lines', line=dict(width=1),
-                yaxis='y', legendgroup=str(site), showlegend=True,
+                x=sub['bin'], y=sub['pdf'], name=label,
+                mode='lines', line=dict(width=2),
+                yaxis='y', legendgroup=label, showlegend=True,
             ))
             fig.add_trace(go.Scatter(
-                x=sub['bin'], y=sub['cdf'], name=str(site),
-                mode='lines', line=dict(width=1),
-                yaxis='y2', legendgroup=str(site), showlegend=False,
+                x=sub['bin'], y=sub['cdf'], name=label,
+                mode='lines', line=dict(width=2),
+                yaxis='y2', legendgroup=label, showlegend=False,
             ))
 
     xaxis = copy.deepcopy(layout.get('xaxis', {})) if layout else {}
@@ -373,7 +520,7 @@ def plotly_grouped_figure(
             fig.add_trace(
                 go.Scatter(
                     x=sub[xcol], y=sub[ycol], name=str(name),
-                    mode="lines", line=dict(width=1),
+                    mode="lines", line=dict(width=2),
                 )
             )
     if layout:
