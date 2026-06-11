@@ -63,6 +63,38 @@ def _slug(title: str) -> str:
     return s or "dashboard"
 
 
+def _panels_to_python(panels: list[dict]) -> str:
+    """Render panel specs as a Python list literal.
+
+    Multi-line SQL strings use raw triple-quoted strings so they're readable
+    in the notebook cell.  Other fields use compact repr/JSON.
+    Python's str.format() substitutes this verbatim without re-scanning for
+    ``{...}`` patterns, so ``${dataset}`` etc. in SQL pass through safely.
+    """
+    def _val(key, v):
+        if key == 'sql' and isinstance(v, str) and '\n' in v:
+            return f'r"""\n{v.strip()}\n""".strip()'
+        if isinstance(v, bool):
+            return 'True' if v else 'False'
+        if v is None:
+            return 'None'
+        if isinstance(v, (int, float)):
+            return repr(v)
+        if isinstance(v, str):
+            return repr(v)
+        # dict / list: compact JSON (no multiline needed for layout etc.)
+        return json.dumps(v)
+
+    lines = ['[']
+    for panel in panels:
+        lines.append('  {')
+        for k, v in panel.items():
+            lines.append(f'    {k!r}: {_val(k, v)},')
+        lines.append('  },')
+    lines.append(']')
+    return '\n'.join(lines)
+
+
 def _panel_spec(panel, var_names: set[str]) -> dict:
     target = panel.targets[0] if panel.targets else None
     sql = target.raw_sql if target else ""
@@ -98,12 +130,12 @@ _METRIC_LAYOUTS = {
 # Code injected before the table display in fleet notebooks.
 # Renders a global map when metros or sites are in the display selection.
 _FLEET_BEFORE_TABLE = """\
-                    _display_sel = ctx.get("display") or []
-                    if isinstance(_display_sel, str): _display_sel = [_display_sel]
-                    if any(d in _display_sel for d in ("metros", "sites")):
-                        _map_df = _df[_df["lat"].notna() & _df["long"].notna()].copy()
-                        if not _map_df.empty:
-                            display(go.FigureWidget(rt.fleet_map(_map_df)))
+                        _display_sel = ctx.get("display") or []
+                        if isinstance(_display_sel, str): _display_sel = [_display_sel]
+                        if any(d in _display_sel for d in ("metros", "sites")):
+                            _map_df = _df[_df["lat"].notna() & _df["long"].notna()].copy()
+                            if not _map_df.empty:
+                                display(go.FigureWidget(rt.fleet_map(_map_df)))
 """
 
 _EXP_METHOD_PREAMBLE = """\
@@ -165,6 +197,14 @@ def _filter_for_cached(variables: list[dict]) -> list[dict]:
             ]
             v['current'] = {'value': 'none'}
         out.append(v)
+
+    # table_style (whether to show) should precede table_field (which metric).
+    # The dashboard has them in the opposite order.
+    _ts = next((i for i, v in enumerate(out) if v['name'] == 'table_style'), None)
+    _tf = next((i for i, v in enumerate(out) if v['name'] == 'table_field'), None)
+    if _ts is not None and _tf is not None and _ts > _tf:
+        out[_ts], out[_tf] = out[_tf], out[_ts]
+
     return out
 
 
@@ -223,9 +263,10 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
 def _filter_for_fleet(variables: list[dict]) -> list[dict]:
     """Minimal filter for table-only dashboards (e.g. Fleet and Egress).
 
-    The only transformation needed is expanding Grafana's ``$__all`` sentinel
-    in any multi-select variable to its real option values so the Python widget
-    gets a concrete default selection.
+    Transformations:
+    - Expand Grafana's ``$__all`` sentinel to explicit option values.
+    - Override ``endDate`` with a dynamic default so it always opens on the
+      date two days before the notebook is launched, not the stale Grafana value.
     """
     out = []
     for v in variables:
@@ -234,10 +275,23 @@ def _filter_for_fleet(variables: list[dict]) -> list[dict]:
         if v.get("multi") and isinstance(cur, list) and "$__all" in cur:
             v["options"] = [o for o in v.get("options", [])
                             if o["value"] != "$__all"]
-            # Default to metros only (not all levels).
             v["current"] = {"value": ["metros"]}
+        elif v["name"] == "endDate":
+            v["dynamic_default"] = "(date.today() - timedelta(days=2)).isoformat()"
         out.append(v)
     return out
+
+
+def _filter_for_barchart(variables: list[dict]) -> list[dict]:
+    """Variable filter for bar-chart-only dashboards (e.g. Global Metro Bar Chart).
+
+    Drops dashboard variables that are Grafana-specific and not useful in a
+    notebook: Prometheus datasource reference, and drill-down URL constants.
+    Keeps ``verbose`` as-is (it controls single-site metro inclusion, not
+    summary-table verbosity).
+    """
+    drop = {'prometheus', 'detailURL'}
+    return [dict(v) for v in variables if v['name'] not in drop]
 
 
 def _add_metrics_var(variables: list[dict]) -> list[dict]:
@@ -285,6 +339,9 @@ def serialize_variables(dashboard, flavor: str = 'prod') -> list[dict]:
     elif flavor == 'fleet':
         filtered = _filter_for_fleet(out)
         return filtered          # no metrics chooser for table-only dashboards
+    elif flavor == 'barchart':
+        filtered = _filter_for_barchart(out)
+        return filtered          # no metrics chooser for bar-chart dashboards
     else:
         filtered = _filter_for_cached(out)
     return _add_metrics_var(filtered)
@@ -391,10 +448,9 @@ w_run = widgets.Button(description="Run / Refresh", button_style="primary", icon
 
 _RENDER = '''\
 # --- Panels (converted from the dashboard) ---
-SUMMARY_PANELS  = json.loads(r"""{summary_json}""")
+SUMMARY_PANELS  = {summary_panels_python}
 METRIC_LAYOUTS  = json.loads(r"""{metric_layouts_json}""")
 REPEAT_VAR      = {repeat_var!r}
-DIAGNOSTIC_TITLE = {diagnostic_title!r}
 
 out = widgets.Output()
 
@@ -419,28 +475,32 @@ def render(_=None):
 
     out.clear_output(wait=True)
     with out:
-        display(Markdown(f"### {{DIAGNOSTIC_TITLE}}"))
-        display(_diagnostics(ctx, from_dt, to_dt))
-
         # Default to "Summary" when table_style is absent (e.g. fleet dashboard).
         table_style = ctx.get("table_style",
                                "Summary" if SUMMARY_PANELS else "none")
         if table_style != "none":
-            # Map table_style → verbose value expected by the regional_report SQL.
             _sctx = dict(ctx)
-            _sctx["verbose"] = "true" if table_style == "Verbose" else "false"
+            if "table_style" in ctx:
+                # Prod: map table_style → verbose flag expected by regional_report SQL.
+                _sctx["verbose"] = "true" if table_style == "Verbose" else "false"
+            # Other flavors (barchart, fleet) pass verbose directly from ctx.
             for p in SUMMARY_PANELS:
                 display(Markdown("### " + qb.interpolate(p["title"], ctx)))
                 sql = qb.interpolate(p["sql"], _sctx, from_dt=from_dt, to_dt=to_dt)
                 try:
                     _df = query(sql)
-{before_table}                    display(HTML(
-                        '<div style="height:500px;overflow:auto">'
-                        + _df.to_html(index=False, na_rep="")
-                        + '</div>'
-                    ))
                 except Exception as exc:
                     display(HTML(f"<pre>query failed: {{exc}}</pre>"))
+                    _df = None
+                if _df is not None:
+                    if p.get("type") == "barchart":
+                        display(rt.metro_barchart_with_links(_df, ctx.get("ISPcount", "5")))
+                    else:
+{before_table}                        display(HTML(
+                            '<div style="height:500px;overflow:auto">'
+                            + _df.to_html(index=False, na_rep="")
+                            + '</div>'
+                        ))
 
         repeats = ctx.get(REPEAT_VAR) or []
         if isinstance(repeats, str):
@@ -492,6 +552,9 @@ def render(_=None):
             if figs:
                 display(widgets.HBox(figs, layout=widgets.Layout(flex_flow="row wrap")))
 
+        display(Markdown("### Selector Diagnostics"))
+        display(_diagnostics(ctx, from_dt, to_dt))
+
 
 w_run.on_click(render)
 '''
@@ -505,21 +568,29 @@ display(widgets.VBox([ctrl.box, w_run, out]))
 def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     info = classify_panels(dashboard)
     variables = serialize_variables(dashboard, flavor=flavor)
-    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp' else ""
-    before_table   = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
+    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'   else ""
+    before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
     nb = new_notebook()
     intro = info["intro"].strip()
-    header = f"# {dashboard.title}\n\n" + (intro if intro else "")
+    # Strip a leading "# Title" line from the intro — the Grafana text panel
+    # often embeds its own h1 that duplicates the dashboard title.
+    intro_lines = intro.splitlines()
+    if intro_lines and intro_lines[0].startswith('# '):
+        intro_lines = intro_lines[1:]
+        while intro_lines and not intro_lines[0].strip():
+            intro_lines = intro_lines[1:]
+        intro = '\n'.join(intro_lines)
+    # Always show exactly one title line.
+    header = f"# {dashboard.title}" + (f"\n\n{intro}" if intro else "")
     nb.cells = [
         new_markdown_cell(header),
         new_code_cell(_SETUP.format(variables_json=_compact_json(variables))),
         new_code_cell(_URL_PARAMS),
         new_code_cell(_CONTROLS),
         new_code_cell(_RENDER.format(
-            summary_json=_compact_json(info["summary"]),
+            summary_panels_python=_panels_to_python(info["summary"]),
             metric_layouts_json=_compact_json(_METRIC_LAYOUTS),
             repeat_var=info["repeat_var"],
-            diagnostic_title=info["diagnostic_title"],
             method_preamble=method_preamble,
             before_table=before_table,
         )),

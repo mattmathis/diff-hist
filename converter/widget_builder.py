@@ -143,8 +143,17 @@ class Controls:
                 w._var_description = desc
                 self.widgets[name] = w
             elif v["type"] == "textbox":
+                _expr = v.get("dynamic_default")
+                if _expr:
+                    from datetime import date, timedelta  # noqa: PLC0415
+                    try:
+                        _default_val = str(eval(_expr))
+                    except Exception:
+                        _default_val = str((v.get("current") or {}).get("value", "") or "")
+                else:
+                    _default_val = str((v.get("current") or {}).get("value", "") or "")
                 w = widgets.Text(
-                    value=str((v.get("current") or {}).get("value", "") or ""),
+                    value=_default_val,
                     description=label,
                     style=style, layout=layout,
                 )

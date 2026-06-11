@@ -452,20 +452,43 @@ def plotly_combined_figure(
     """
     fig = go.Figure()
     if df is not None and not df.empty and 'pdf' in df.columns:
-        for site in sorted(df['siteName'].dropna().unique(), key=str):
+        sites = sorted(df['siteName'].dropna().unique(), key=str)
+
+        # Precompute labels (needs n_tests before either trace loop).
+        labels = {}
+        subs   = {}
+        for site in sites:
             sub = df[df['siteName'] == site]
-            n = (int(sub['n_tests'].iloc[0])
-                 if 'n_tests' in sub.columns and len(sub) > 0 else None)
-            label = f"{site} ({n:,})" if n is not None else str(site)
+            n   = (int(sub['n_tests'].iloc[0])
+                   if 'n_tests' in sub.columns and len(sub) > 0 else None)
+            _base = f"{site} ({n:,})" if n is not None else str(site)
+            labels[site] = f"<b>{_base}</b>"
+            subs[site]   = sub
+
+        # Add CDF traces first so Plotly assigns them colours 0, 1, 2 … from
+        # the active template's colorway.
+        for site in sites:
             fig.add_trace(go.Scatter(
-                x=sub['bin'], y=sub['pdf'], name=label,
+                x=subs[site]['bin'], y=subs[site]['cdf'], name=labels[site],
                 mode='lines', line=dict(width=2),
-                yaxis='y', legendgroup=label, showlegend=True,
+                yaxis='y2', legendgroup=labels[site], showlegend=False,
             ))
+
+        # Read the colours Plotly would assign (sequential index into colorway).
+        import plotly.io as _pio
+        _colorway = list(
+            _pio.templates[_pio.templates.default].layout.colorway
+            or ['#636EFA','#EF553B','#00CC96','#AB63FA','#FFA15A',
+                '#19D3F3','#FF6692','#B6E880','#FF97FF','#FECB52']
+        )
+
+        # Add PDF traces with colours that match their CDF counterparts.
+        for i, site in enumerate(sites):
+            color = _colorway[i % len(_colorway)]
             fig.add_trace(go.Scatter(
-                x=sub['bin'], y=sub['cdf'], name=label,
-                mode='lines', line=dict(width=2),
-                yaxis='y2', legendgroup=label, showlegend=False,
+                x=subs[site]['bin'], y=subs[site]['pdf'], name=labels[site],
+                mode='lines', line=dict(width=2, color=color),
+                yaxis='y', legendgroup=labels[site], showlegend=True,
             ))
 
     xaxis = copy.deepcopy(layout.get('xaxis', {})) if layout else {}
@@ -473,13 +496,14 @@ def plotly_combined_figure(
     # area. The legend is anchored inside that gap to avoid consuming extra
     # vertical space above or below the subplots.
     fig.update_layout(
-        title=dict(text=title, font=dict(size=11), pad=dict(t=0, b=0)),
+        title=dict(text=f"<b>{title}</b>" if title else "",
+                   font=dict(size=13), pad=dict(t=0, b=0)),
         height=600,
         showlegend=True,
         legend=dict(
             orientation='h', x=0.5, y=0.50,
             xanchor='center', yanchor='middle',
-            font=dict(size=9),
+            font=dict(size=11),
         ),
         margin=dict(l=50, r=55, t=22, b=15),
         paper_bgcolor='rgba(0,0,0,0)',
@@ -608,6 +632,83 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
         paper_bgcolor='rgba(0,0,0,0)',
         font=dict(color='grey'),
         showlegend=False,
+    )
+    return fig
+
+
+def metro_barchart_with_links(
+    df: pd.DataFrame,
+    isp_count: int | str = 5,
+    target_notebook: str = "regional_details_dashboard",
+) -> "go.FigureWidget":
+    """Metro bar chart with click-to-navigate to Regional Details.
+
+    Clicking any bar extracts the 3-letter metro code from the x-axis label
+    (format: "City CC (abc)"), builds a Voilà-relative URL for the Regional
+    Details notebook with ``anchor=<metro>&ISPcount=<isp_count>`` pre-set,
+    opens it in a new browser tab, and displays a clickable link in the output.
+    All other Regional Details parameters use their defaults.
+    """
+    import re as _re
+
+    fw = go.FigureWidget(metro_barchart(df))
+
+    def _on_click(trace, points, state):
+        if not points.point_inds:
+            return
+        name = str(points.xs[0])
+        m = _re.search(r'\(([a-z]{3})\)', name)
+        if not m:
+            return
+        anchor = m.group(1)
+        url = (f"/voila/render/{target_notebook}.ipynb"
+               f"?anchor={anchor}&ISPcount={isp_count}")
+        from IPython.display import display as _d, HTML as _H, Javascript as _J
+        _d(_H(
+            f'<p style="margin:4px 0">→ <a href="{url}" target="_blank"'
+            f' style="font-size:13px"><b>{name}</b> — Regional Details'
+            f' (ISPcount={isp_count})</a></p>'
+        ))
+        _d(_J(f"window.open('{url}', '_blank')"))
+
+    for trace in fw.data:
+        trace.on_click(_on_click)
+
+    return fw
+
+
+def metro_barchart(df: pd.DataFrame, title: str = "") -> go.Figure:
+    """Grouped bar chart of metro-level KS distance and spread scores.
+
+    Expects a DataFrame with columns ``name`` (metro label), ``scaledKSdistance``
+    (KS distance × 10), and ``Spread``.  Bars are sorted by the x-axis values
+    already present in the DataFrame (caller controls ORDER BY).
+    """
+    fig = go.Figure()
+    if df is not None and not df.empty:
+        fig.add_trace(go.Bar(
+            x=df['name'], y=df['scaledKSdistance'],
+            name='KSdistance × 10',
+            marker_color='steelblue',
+        ))
+        if 'Spread' in df.columns:
+            fig.add_trace(go.Bar(
+                x=df['name'], y=df['Spread'],
+                name='Spread',
+                marker_color='coral',
+            ))
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=11)) if title else None,
+        barmode='group',
+        height=500,
+        xaxis=dict(tickangle=-45, tickfont=dict(size=8)),
+        yaxis=dict(gridcolor='#333'),
+        margin=dict(l=50, r=20, t=35, b=130),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='grey'),
+        legend=dict(orientation='h', y=1.02, x=0),
+        showlegend=True,
     )
     return fig
 

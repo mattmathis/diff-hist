@@ -23,14 +23,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from converter.notebook_builder import write_notebook  # noqa: E402
 from converter.parser import parse_dashboard           # noqa: E402
+from gen_deps import gen_all as _gen_deps              # noqa: E402
 
 
 def _detect_flavor(dashboard) -> str:
-    var_names = {v.name for v in dashboard.variables}
+    var_names  = {v.name for v in dashboard.variables}
+    panel_types = {p.type for p in dashboard.panels}
     if 'methodsrc' in var_names:
         return 'exp'
     if 'method' in var_names:
         return 'prod'
+    if 'barchart' in panel_types:
+        return 'barchart'
     return 'fleet'
 
 
@@ -48,6 +52,7 @@ def main() -> int:
     path = write_notebook(dash, args.dashboard, outdir=args.outdir, flavor=flavor)
     print(f"Wrote {path}  ({len(dash.panels)} panels, "
           f"{len(dash.variables)} variables, flavor={flavor})")
+    _gen_deps()   # keep docs/dependencies.md current
     return 0
 
 
