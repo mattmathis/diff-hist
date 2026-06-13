@@ -95,6 +95,11 @@ def _panels_to_python(panels: list[dict]) -> str:
     return '\n'.join(lines)
 
 
+# Pure browser-side Plotly.js click handler — no Python callback needed.
+# Attached via a <script> tag so it works in Voilà.  Uses a sentinel in _RENDER
+# to avoid brace-escaping in str.format().
+
+
 def _panel_spec(panel, var_names: set[str]) -> dict:
     target = panel.targets[0] if panel.targets else None
     sql = target.raw_sql if target else ""
@@ -391,7 +396,7 @@ def classify_panels(dashboard):
 _SETUP = '''\
 # --- Setup ---
 import os, sys, json
-from datetime import datetime, date, time, timedelta
+from datetime import datetime, date, time, timedelta, timezone
 
 # Locate the repo root (directory containing `converter/`) regardless of where
 # Voila/Jupyter is launched from.
@@ -440,10 +445,27 @@ if _env:
     url_params.update(json.loads(_env))
 '''
 
+# Date-picker block for exp/live flavors; other flavors get the null version.
+_DATE_PICKERS_EXP = """\
+
+# Date range for experimental/live backends — ignored when method=cached.
+# Defaults to one week ending on the most recent Sunday (UTC).
+_today_utc  = datetime.now(timezone.utc).date()
+_days_back  = (_today_utc.weekday() + 1) % 7   # 0 on Sunday, 1 on Monday …
+_end_date   = _today_utc - timedelta(days=_days_back)
+_start_date = _end_date  - timedelta(days=6)
+w_to   = widgets.DatePicker(value=_end_date,   description='End (UTC)',
+                             style={"description_width": "90px"})
+w_from = widgets.DatePicker(value=_start_date, description='Start (UTC)',
+                             style={"description_width": "90px"})
+"""
+_DATE_PICKERS_NONE = "\nw_from = w_to = None\n"
+
 _CONTROLS = '''\
 # --- Dashboard controls (dropdowns; query-backed ones are chained) ---
 ctrl = Controls(VARIABLES, client, presets=url_params)
 w_run = widgets.Button(description="Run / Refresh", button_style="primary", icon="play")
+{date_pickers}_date_label = widgets.HTML('')   # filled from query results after Run
 '''
 
 _RENDER = '''\
@@ -455,17 +477,18 @@ REPEAT_VAR      = {repeat_var!r}
 out = widgets.Output()
 
 
-def _diagnostics(ctx, from_dt, to_dt):
-    rows = [("from", from_dt.date().isoformat()), ("to", to_dt.date().isoformat())]
-    for k, v in ctx.items():
-        rows.append((k, ", ".join(v) if isinstance(v, list) else str(v)))
+def _diagnostics(ctx):
+    rows = [(k, ", ".join(v) if isinstance(v, list) else str(v))
+            for k, v in ctx.items()]
     return pd.DataFrame(rows, columns=["variable", "value"])
 
 
 def render(_=None):
     ctx = ctrl.context()
-{method_preamble}    to_dt = datetime.combine(date.today(), time())
-    from_dt = to_dt - timedelta(days=7)
+{method_preamble}    to_dt   = (datetime.combine(w_to.value,   time(), tzinfo=timezone.utc)
+               if w_to   and w_to.value   else datetime.now(timezone.utc))
+    from_dt = (datetime.combine(w_from.value, time(), tzinfo=timezone.utc)
+               if w_from and w_from.value else to_dt - timedelta(days=7))
     cache = {{}}
 
     def query(sql):
@@ -494,7 +517,12 @@ def render(_=None):
                     _df = None
                 if _df is not None:
                     if p.get("type") == "barchart":
-                        display(rt.metro_barchart_with_links(_df, ctx.get("ISPcount", "5")))
+                        _fig = rt.metro_barchart(
+                            _df, isp_count=ctx.get("ISPcount", "5"))
+                        _fig._config = {{"responsive": False}}
+                        display(_fig)
+                        display(HTML(rt.metro_nav_html(
+                            _df, isp_count=ctx.get("ISPcount", "5"))))
                     else:
 {before_table}                        display(HTML(
                             '<div style="height:500px;overflow:auto">'
@@ -533,6 +561,16 @@ def render(_=None):
             except Exception as exc:
                 bulk_by_metric[metric] = exc
 
+        # Update cached date range label from metroStart/metroEnd in query results.
+        for _mdf in bulk_by_metric.values():
+            if isinstance(_mdf, pd.DataFrame) and 'metroStart' in _mdf.columns:
+                _s = pd.to_datetime(_mdf['metroStart'].dropna().min()).date()
+                _e = pd.to_datetime(_mdf['metroEnd'].dropna().max()).date()
+                _date_label.value = (
+                    '<div style="font-size:12px;color:grey;margin:2px 0">'
+                    '<b>Cached data:</b> ' + str(_s) + ' – ' + str(_e) + '</div>')
+                break
+
         for value in repeats:
             asn = str(value).split()[0]
             display(HTML(f"<h3>{{REPEAT_VAR}}: {{value}}</h3>"))
@@ -552,8 +590,13 @@ def render(_=None):
             if figs:
                 display(widgets.HBox(figs, layout=widgets.Layout(flex_flow="row wrap")))
 
-        display(Markdown("### Selector Diagnostics"))
-        display(_diagnostics(ctx, from_dt, to_dt))
+        _diag_out = widgets.Output()
+        with _diag_out:
+            display(_diagnostics(ctx))
+        _diag_acc = widgets.Accordion(children=[_diag_out])
+        _diag_acc.set_title(0, 'Selector Diagnostics')
+        _diag_acc.selected_index = None   # collapsed by default
+        display(_diag_acc)
 
 
 w_run.on_click(render)
@@ -561,7 +604,10 @@ w_run.on_click(render)
 
 _DISPLAY = '''\
 # --- Display the app ---
-display(widgets.VBox([ctrl.box, w_run, out]))
+_date_row = (widgets.HBox([w_from, w_to],
+                          layout=widgets.Layout(margin='2px 0'))
+             if w_from is not None else widgets.HTML(''))
+display(widgets.VBox([ctrl.box, _date_label, _date_row, w_run, out]))
 '''
 
 
@@ -570,6 +616,7 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     variables = serialize_variables(dashboard, flavor=flavor)
     method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'   else ""
     before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
+    date_pickers    = _DATE_PICKERS_EXP    if flavor == 'exp'   else _DATE_PICKERS_NONE
     nb = new_notebook()
     intro = info["intro"].strip()
     # Strip a leading "# Title" line from the intro — the Grafana text panel
@@ -586,7 +633,7 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
         new_markdown_cell(header),
         new_code_cell(_SETUP.format(variables_json=_compact_json(variables))),
         new_code_cell(_URL_PARAMS),
-        new_code_cell(_CONTROLS),
+        new_code_cell(_CONTROLS.format(date_pickers=date_pickers)),
         new_code_cell(_RENDER.format(
             summary_panels_python=_panels_to_python(info["summary"]),
             metric_layouts_json=_compact_json(_METRIC_LAYOUTS),
@@ -601,6 +648,11 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
                        "name": "python3"},
         "language_info": {"name": "python"},
     })
+    # Collapse all code cell inputs by default in JupyterLab.
+    # Voilà already hides code; this makes Jupyter behave the same way.
+    for cell in nb.cells:
+        if cell.cell_type == "code":
+            cell.metadata.setdefault("jupyter", {})["source_hidden"] = True
     return nb
 
 

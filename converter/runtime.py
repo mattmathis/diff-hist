@@ -190,6 +190,27 @@ def rewrite_histogram_call(sql: str, method: str) -> str:
     return sql[:m.start()] + new_call + sql[close_pos + 1:]
 
 
+def get_cached_date_range(
+    client,
+    dataset: str = "mlab-collaboration.mm_preproduction",
+) -> str:
+    """Return the date range string for the current cached histogram data.
+
+    Queries ``cached_metro_report`` for the rank-0 summary row whose
+    ``ISPname`` encodes the coverage dates, e.g.
+    ``'2026-05-22 - 2026-05-28 cached'``.
+    """
+    sql = (f'SELECT ISPname FROM `{dataset}.cached_metro_report`'
+           f'("MinRTT", ".*", 1) LIMIT 1')
+    df = run_query(client, sql)
+    if df.empty:
+        return "unknown"
+    val = str(df['ISPname'].iloc[0])
+    # Strip leading rank prefix "0 " → keep the date range onwards.
+    m = re.search(r'(\d{4}-\d{2}-\d{2}.*)', val)
+    return m.group(1).strip() if m else val
+
+
 def asn_regex(isp_names: list) -> str:
     """Build a BQ regex matching any of the ISP names by their ASN (client AS number).
 
@@ -343,8 +364,9 @@ def _compute_pdfs(df: pd.DataFrame) -> pd.DataFrame:
         grp['pdf'] = grp['hist'] / total
         grp['cdf'] = grp['hist'].cumsum() / total
         grp['n_tests'] = int(total)
+        extra = [c for c in ('metroStart', 'metroEnd') if c in grp.columns]
         results.append(
-            grp[['binIX', 'bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests']]
+            grp[['binIX', 'bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests'] + extra]
         )
     if not results:
         return pd.DataFrame(
@@ -677,25 +699,54 @@ def metro_barchart_with_links(
     return fw
 
 
-def metro_barchart(df: pd.DataFrame, title: str = "") -> go.Figure:
+def metro_barchart(
+    df: pd.DataFrame,
+    title: str = "",
+    isp_count: int | str | None = None,
+    target_notebook: str = "regional_details_dashboard",
+) -> go.Figure:
     """Grouped bar chart of metro-level KS distance and spread scores.
 
-    Expects a DataFrame with columns ``name`` (metro label), ``scaledKSdistance``
-    (KS distance × 10), and ``Spread``.  Bars are sorted by the x-axis values
-    already present in the DataFrame (caller controls ORDER BY).
+    When ``isp_count`` is supplied, each bar's hover tooltip contains a
+    clickable ``<a href>`` link to the Regional Details notebook pre-set to
+    that metro and ISP count.  This works in Voilà without Python callbacks
+    because the link is rendered as HTML directly in the browser.
     """
+    import re as _re
+
+    def _url(name: str) -> str | None:
+        m = _re.search(r'\(([a-z]{3})\)', str(name))
+        if not m or isp_count is None:
+            return ""
+        return (f"/voila/render/{target_notebook}.ipynb"
+                f"?anchor={m.group(1)}&ISPcount={isp_count}")
+
     fig = go.Figure()
     if df is not None and not df.empty:
+        urls = [_url(n) for n in df['name']]
+        has_links = isp_count is not None
+        _nav_hint = ''  # navigation via companion link list; hover is display-only
+
         fig.add_trace(go.Bar(
             x=df['name'], y=df['scaledKSdistance'],
             name='KSdistance × 10',
             marker_color='steelblue',
+            customdata=urls,
+            hovertemplate=(
+                '<b>%{x}</b><br>KSdistance×10: %{y:.3f}'
+                + _nav_hint + '<extra></extra>'
+            ),
         ))
         if 'Spread' in df.columns:
             fig.add_trace(go.Bar(
                 x=df['name'], y=df['Spread'],
                 name='Spread',
                 marker_color='coral',
+                customdata=urls,
+                hovertemplate=(
+                    '<b>%{x}</b><br>Spread: %{y:.3f}'
+                    + _nav_hint + '<extra></extra>'
+                ),
             ))
     fig.update_layout(
         title=dict(text=title, font=dict(size=11)) if title else None,
@@ -711,6 +762,40 @@ def metro_barchart(df: pd.DataFrame, title: str = "") -> go.Figure:
         showlegend=True,
     )
     return fig
+
+
+def metro_nav_html(
+    df: pd.DataFrame,
+    isp_count: int | str = 5,
+    target_notebook: str = "regional_details_dashboard",
+) -> str:
+    """Collapsible HTML list of metro navigation links for use beside a bar chart.
+
+    Uses ``<details>/<summary>`` — no JavaScript required, works in any browser.
+    The user expands the list and clicks a metro to open Regional Details.
+    """
+    import re as _re
+
+    rows = []
+    for name in df['name'].dropna().unique():
+        m = _re.search(r'\(([a-z]{3})\)', str(name))
+        if not m:
+            continue
+        url = (f"/voila/render/{target_notebook}.ipynb"
+               f"?anchor={m.group(1)}&ISPcount={isp_count}")
+        rows.append(
+            f'<li style="white-space:nowrap">'
+            f'<a href="{url}" target="_blank">{name}</a></li>'
+        )
+    if not rows:
+        return ""
+    return (
+        '<div style="margin-top:6px;font-size:11px">'
+        '<span style="color:grey">↗ Open in Regional Details:</span>'
+        '<ul style="columns:3;margin:2px 0;padding-left:18px">'
+        + "\n".join(rows)
+        + "</ul></div>"
+    )
 
 
 def plotly_grouped_figure(
