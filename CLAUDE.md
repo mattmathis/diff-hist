@@ -258,9 +258,10 @@ logic changes.
 ### No-auth local Voilà (`jupyter_server_config.py`)
 
 ```python
-c.ServerApp.token = ''
-c.ServerApp.password = ''
-c.ServerApp.open_browser = False
+c.Voila.token = ''
+c.Voila.password = ''
+c.Voila.ip = '0.0.0.0'
+c.Voila.open_browser = False
 c.MappingKernelManager.cull_idle_timeout = 120
 c.MappingKernelManager.cull_interval = 30
 c.MappingKernelManager.cull_connected = True
