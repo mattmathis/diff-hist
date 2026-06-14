@@ -2,6 +2,7 @@
 
 c.ServerApp.token    = ''
 c.ServerApp.password = ''
+c.ServerApp.ip       = '0.0.0.0'   # listen on all interfaces, not just localhost
 c.ServerApp.open_browser = False   # don't auto-open a browser tab on start
 
 # Cull idle kernels quickly to reclaim memory from abandoned sessions
