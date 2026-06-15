@@ -32,23 +32,38 @@ class CheckboxGroup:
     Exposes ``.value`` (tuple of selected values) and ``.observe()`` so it is
     a drop-in replacement for ``SelectMultiple`` in :class:`Controls`.  Use
     ``.widget`` to get the displayable ``VBox``.
+
+    Supports dynamic ``options`` updates (needed for query variables whose
+    option lists are refreshed when a parent dropdown changes).
     """
 
-    def __init__(self, options: list[tuple], description: str = ""):
-        self._checks: dict[str, widgets.Checkbox] = {
-            val: widgets.Checkbox(
-                value=False, description=lbl, indent=False,
+    def __init__(self, options: list[tuple] | None = None, description: str = ""):
+        self._callbacks: list = []
+        self._checks: dict[str, widgets.Checkbox] = {}
+        self._label = widgets.HTML(f"<b>{description}</b>" if description else "")
+        self._container = widgets.VBox([])
+        self.widget = widgets.VBox(
+            ([self._label] if description else []) + [self._container]
+        )
+        if options:
+            self.options = options
+
+    @property
+    def options(self) -> list[tuple]:
+        return [(cb.description, val) for val, cb in self._checks.items()]
+
+    @options.setter
+    def options(self, new_opts: list[tuple]):
+        prev = set(self.value)
+        self._checks = {}
+        for lbl, val in new_opts:
+            cb = widgets.Checkbox(
+                value=val in prev, description=lbl, indent=False,
                 layout=widgets.Layout(width="auto"),
             )
-            for lbl, val in options
-        }
-        label = widgets.HTML(f"<b>{description}</b>" if description else "")
-        self.widget = widgets.VBox(
-            ([label] if description else []) + list(self._checks.values())
-        )
-        self._callbacks: list = []
-        for cb in self._checks.values():
             cb.observe(self._fire, names="value")
+            self._checks[val] = cb
+        self._container.children = tuple(self._checks.values())
 
     def _fire(self, _change):
         for fn in self._callbacks:
@@ -136,8 +151,7 @@ class Controls:
                 query_vars.append(v)
                 # Created empty; options filled in dependency order below.
                 if v["multi"]:
-                    w = widgets.SelectMultiple(description=label,
-                                               rows=6, style=style, layout=layout)
+                    w = CheckboxGroup(description=label)
                 else:
                     w = widgets.Dropdown(description=label, style=style, layout=layout)
                 w._var_description = desc
@@ -163,15 +177,7 @@ class Controls:
                 opts = [(o.get("text", o.get("value")), o.get("value"))
                         for o in (v.get("options") or [])] or []
                 if v.get("multi"):
-                    if v.get("widget_style") == "checkboxes":
-                        w = CheckboxGroup(opts, description=label)
-                    else:
-                        w = widgets.SelectMultiple(
-                            options=opts,
-                            description=label,
-                            rows=min(6, max(2, len(opts))),
-                            style=style, layout=layout,
-                        )
+                    w = CheckboxGroup(opts, description=label)
                 else:
                     w = widgets.Dropdown(options=opts or None, description=label,
                                          style=style, layout=layout)
