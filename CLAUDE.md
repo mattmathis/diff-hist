@@ -28,7 +28,7 @@ notebooks, with a "webapp" mode that accepts dropdown presets from URL parameter
 ```
 project/
 ├── CLAUDE.md
-├── jupyter_server_config.py  # No-auth local Voilà + kernel culling
+├── voila.json                # No-auth + kernel culling; copy to ~/.jupyter/voila.json
 ├── converter/
 │   ├── parser.py           # Parse Grafana JSON → Dashboard/Panel/Variable model
 │   ├── query_builder.py    # rawSql variable interpolation; Raw passthrough class;
@@ -255,20 +255,25 @@ automatically after every `tools/convert.py` run. Update
 `_FETCH_HISTOGRAMS_DISPATCH` in the file if `runtime.fetch_histograms` dispatch
 logic changes.
 
-### No-auth local Voilà (`jupyter_server_config.py`)
+### No-auth local Voilà (`voila.json`)
 
-```python
-c.Voila.token = ''
-c.Voila.password = ''
-c.Voila.ip = '0.0.0.0'
-c.Voila.open_browser = False
-c.MappingKernelManager.cull_idle_timeout = 120
-c.MappingKernelManager.cull_interval = 30
-c.MappingKernelManager.cull_connected = True
+```json
+{
+  "Voila": {
+    "ip": "0.0.0.0",
+    "token": "",
+    "open_browser": false
+  },
+  "MappingKernelManager": {
+    "cull_idle_timeout": 120,
+    "cull_interval": 30,
+    "cull_connected": true
+  }
+}
 ```
 
-Picked up automatically by `voila` (and `jupyter`) when run from the project
-root. Disables auth for local use; culls idle kernels after 2 minutes.
+Copy to `~/.jupyter/voila.json`. Disables auth, binds to all interfaces,
+and culls idle kernels after 2 minutes.
 
 ### BQ function documentation (`tools/gen_docs.py`)
 
