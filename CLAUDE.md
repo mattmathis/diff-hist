@@ -105,6 +105,59 @@ voila notebooks/<slug>.ipynb
 kill $(lsof -t -i:8866)   # default port 8866
 ```
 
+## GCE Deployment
+
+The public instance is `mm-byos-tester3` (34.68.11.17, us-central1-a, mlab-collaboration).
+Voilà runs as a systemd service so it starts on boot and restarts on crash.
+
+### Setup (one-time on the instance)
+
+```bash
+sudo tee /etc/systemd/system/voila.service << 'EOF'
+[Unit]
+Description=Voila notebook server
+After=network.target
+
+[Service]
+User=mattmathis
+WorkingDirectory=/home/mattmathis/Projects/diff-hist
+ExecStart=/home/mattmathis/Projects/diff-hist/.venv/bin/voila notebooks/
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable voila
+sudo systemctl start voila
+```
+
+### Normal operations
+
+```bash
+sudo systemctl status voila    # check status
+sudo systemctl restart voila   # restart after pulling new notebooks
+sudo journalctl -u voila -f    # tail logs
+```
+
+### Debugging (manual start)
+
+```bash
+sudo systemctl stop voila                  # hand control to yourself
+voila notebooks/ --debug                   # run manually (Ctrl+C to stop)
+sudo systemctl start voila                 # hand back to systemd when done
+```
+
+### Deploying notebook updates
+
+```bash
+# On the instance:
+git pull
+sudo systemctl restart voila
+```
+
 ## URL Parameter Presets (webapp mode)
 
 Voilà injects the HTTP request's query string into `os.environ["QUERY_STRING"]`
