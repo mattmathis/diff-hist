@@ -28,7 +28,7 @@ notebooks, with a "webapp" mode that accepts dropdown presets from URL parameter
 ```
 project/
 ├── CLAUDE.md
-├── voila.json                # No-auth + kernel culling; copy to ~/.jupyter/voila.json
+├── voila.json                # No-auth + kernel culling; auto-loaded from repo root
 ├── converter/
 │   ├── parser.py           # Parse Grafana JSON → Dashboard/Panel/Variable model
 │   ├── query_builder.py    # rawSql variable interpolation; Raw passthrough class;
@@ -98,7 +98,7 @@ python tools/convert.py "dashboards/<dashboard>.json"
 # 5a. Interactive mode
 jupyter notebook notebooks/<slug>.ipynb
 
-# 5b. Webapp mode (no-auth config picked up automatically from jupyter_server_config.py)
+# 5b. Webapp mode (run from repo root so voila.json is picked up automatically)
 voila notebooks/<slug>.ipynb
 
 # Kill a running Voilà server
@@ -272,8 +272,8 @@ logic changes.
 }
 ```
 
-Copy to `~/.jupyter/voila.json`. Disables auth, binds to all interfaces,
-and culls idle kernels after 2 minutes.
+Picked up automatically when Voilà is run from the repo root. Disables auth,
+binds to all interfaces, and culls idle kernels after 2 minutes.
 
 ### BQ function documentation (`tools/gen_docs.py`)
 
