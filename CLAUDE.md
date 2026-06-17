@@ -66,6 +66,16 @@ The converter **always writes to `notebooks.stage/`**, never to `notebooks/`.
 manually merges staged output into `notebooks/`. Never write converter output
 directly into `notebooks/`.
 
+### Keeping outputs out of git
+
+Two complementary mechanisms prevent notebook outputs from being committed:
+
+- **`nbstripout`** (git filter) — strips outputs at `git add` time. The working
+  copy keeps outputs for your interactive session; they are never staged.
+  Install once per clone: `pip install nbstripout && nbstripout --install`
+- **pre-commit hook** (`.git/hooks/pre-commit`) — clears outputs from any staged
+  notebooks as a safety net before each commit.
+
 ## Dashboards
 
 | File | Flavor | Notes |
@@ -254,10 +264,9 @@ fetched via `fetch_histograms`, not SQL templates.
   kept from dashboard.
 - `method` composite variable dropped — the render cell builds it in Python:
   `f"{methodsrc}-{locate}-{sub_method}[-{extra_flags}]"`.
-- `sub_method` dropdown added (default / showIPv / showEarly / showNames / showName=…).
-- `extra_flags` free-text input added (arbitrary subselector flags appended to method).
-- `metrics` multi-select added. No summary table (table_style=none always).
-- No option pruning — exp backend supports more fields than cached.
+- `sub_method` dropdown and `extra_flags` textbox inserted at the top, before anchor.
+- `verbose` renamed to `table_style` (none/Summary/Verbose, default none) — same as prod.
+- `metrics` multi-select added. No option pruning — exp backend supports more fields.
 - DatePicker widgets for `from_dt` / `to_dt`, defaulting to the most recent
   Sunday week (UTC): days since Sunday = `(_today_utc.weekday() + 1) % 7`.
 
@@ -326,7 +335,8 @@ logic changes.
 ```
 
 Picked up automatically when Voilà is run from the repo root. Disables auth,
-binds to all interfaces, and culls idle kernels after 2 minutes.
+binds to all interfaces. Kernels with an active browser connection are never
+culled; abandoned kernels (browser closed) are culled after 10 minutes.
 
 ### BQ function documentation (`tools/gen_docs.py`)
 

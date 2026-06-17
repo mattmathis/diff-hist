@@ -7,3 +7,4 @@ google-cloud-bigquery
 db-dtypes
 anywidget
 pandas
+nbstripout

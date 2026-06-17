@@ -216,24 +216,52 @@ def _filter_for_cached(variables: list[dict]) -> list[dict]:
 def _filter_for_exp(variables: list[dict]) -> list[dict]:
     """Variable filter for the experimental dashboard.
 
-    Drops dashboard-derived variables that are replaced by Python logic
-    (composite ``method``) or superseded by the metrics chooser.  Adds
-    ``sub_method`` and ``extra_flags`` sub-selector controls.
+    Matches prod layout: table_style chooser, same selector styles for
+    region/ClientISP/metrics.  Sub-method and extra_flags appear first,
+    before anchor.
     """
     out = []
     for v in list(variables):
         v = dict(v)
         name = v['name']
-        if name in ('mode', 'method', 'field', 'verbose'):
-            continue  # handled elsewhere or superseded
+        if name in ('mode', 'method', 'field'):
+            continue
+        elif name == 'verbose':
+            # Same three-way table_style chooser as prod.
+            v['name'] = 'table_style'
+            v['label'] = 'Table'
+            v['description'] = 'Summary table display style.'
+            v['options'] = [
+                {'text': 'none',    'value': 'none'},
+                {'text': 'Summary', 'value': 'Summary'},
+                {'text': 'Verbose', 'value': 'Verbose'},
+            ]
+            v['current'] = {'value': 'none'}
         elif name == 'region':
             v['default_select'] = 'all'
         elif name == 'ClientISP':
             v['default_select'] = 'half'
         out.append(v)
 
-    # Sub-method flag selector
-    out.append({
+    # table_style before table_field (same ordering as prod).
+    _ts = next((i for i, v in enumerate(out) if v['name'] == 'table_style'), None)
+    _tf = next((i for i, v in enumerate(out) if v['name'] == 'table_field'), None)
+    if _ts is not None and _tf is not None and _ts > _tf:
+        out[_ts], out[_tf] = out[_tf], out[_ts]
+
+    # Sub-method and extra_flags at the top, before anchor.
+    out.insert(0, {
+        "name": "extra_flags",
+        "type": "textbox",
+        "label": "Extra flags",
+        "description": "Arbitrary subselector flags appended to the method string.",
+        "hide": 0,
+        "multi": False,
+        "options": [],
+        "current": {"value": ""},
+        "query_sql": None,
+    })
+    out.insert(0, {
         "name": "sub_method",
         "type": "custom",
         "label": "Sub-method",
@@ -248,18 +276,6 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
             {"text": "showName=…", "value": "showName="},
         ],
         "current": {"value": "default"},
-        "query_sql": None,
-    })
-    # Free-text extra flags (appended to method string)
-    out.append({
-        "name": "extra_flags",
-        "type": "textbox",
-        "label": "Extra flags",
-        "description": "Arbitrary subselector flags appended to the method string.",
-        "hide": 0,
-        "multi": False,
-        "options": [],
-        "current": {"value": ""},
         "query_sql": None,
     })
     return out
@@ -600,6 +616,8 @@ def render(_=None):
 
 
 w_run.on_click(render)
+if url_params:
+    render()
 '''
 
 _DISPLAY = '''\

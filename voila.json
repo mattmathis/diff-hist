@@ -5,8 +5,8 @@
     "open_browser": false
   },
   "MappingKernelManager": {
-    "cull_idle_timeout": 120,
-    "cull_interval": 30,
-    "cull_connected": true
+    "cull_idle_timeout": 600,
+    "cull_interval": 60,
+    "cull_connected": false
   }
 }
