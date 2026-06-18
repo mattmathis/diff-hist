@@ -117,8 +117,13 @@ kill $(lsof -t -i:8866)   # default port 8866
 
 ## GCE Deployment
 
-The public instance is `mm-byos-tester3` (34.68.11.17, us-central1-a, mlab-collaboration).
-Voilà runs as a systemd service so it starts on boot and restarts on crash.
+| Instance | IP | Purpose |
+|---|---|---|
+| `annealing` | 34.58.12.41 (static) | Primary public Voilà server |
+| `mm-byos-tester3` | 34.68.11.17 (ephemeral) | Reserved for limited testing only |
+
+Voilà runs as a systemd service on both instances (starts on boot, restarts on crash).
+`annealing` has a static IP; `mm-byos-tester3` IP may change on stop/start.
 
 ### Setup (one-time on the instance)
 
