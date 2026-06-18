@@ -120,6 +120,48 @@ def _panel_spec(panel, var_names: set[str]) -> dict:
 # Used to prune dropdown choices that would silently fall back to MinRTT.
 _CACHED_TABLE_FIELDS = {'MinRTT', 'MeanThroughputMbps', 'LossRate', 'linearMinRTT'}
 
+# Summary panel injected into exp notebooks (the source Grafana dashboard has no
+# table panel, but regional_report works with method=cached in exp too).
+_EXP_SUMMARY_PANEL = {
+    "id": 20,
+    "title": "Summary Statistics for the top ISPs in $anchor",
+    "type": "table",
+    "sql": (
+        'SELECT level, Metric, Sites, tests, pct, KSdistance,\n'
+        '  KSoutlier AS KS_breadcrumb, Spread, SPoutlier AS SP_Breadcrumb, ISPname\n'
+        'FROM (\n'
+        '  SELECT * EXCEPT (ISPname),\n'
+        '  data AS metric,\n'
+        '  percent AS pct,\n'
+        '  IF (level like "Regional Summary",\n'
+        '    FORMAT ("%t summary", REGEXP_REPLACE(ISPname, \'^0 \', "")),\n'
+        '    ISPname\n'
+        '    ) AS ISPname,\n'
+        '  FROM `${dataset}.regional_report` ("${method}","${xAxis}", ${binSize}, "${table_field}",\n'
+        '    DATE(REGEXP_EXTRACT("${__from:date:iso}", \'[0-9]{4}-[0-9]{2}-[0-9]{2}\')),\n'
+        '    DATE(REGEXP_EXTRACT("${__to:date:iso}", \'[0-9]{4}-[0-9]{2}-[0-9]{2}\')),\n'
+        '    "^(${region:regex})", "^(${ClientISP:regex})", ${ISPcount})\n'
+        '  WHERE ${verbose} OR level like "Regional Summary" OR level LIKE "ISP%%"\n'
+        ')'
+    ),
+    "layout": {},
+    "skip_if_field_none": False,
+}
+
+# Markdown cell inserted after the title in exp notebooks.
+_EXP_FEATURES_MD = """\
+**For developer use — not suitable for publication.**
+
+## Experimental Features
+
+- **Multiple BQ backends** — switch between `exp-DS16`, `exp-DS1C`, `exp-DS1V`, and `cached`
+- **Editable date range** — date pickers defaulting to the most recent full week (Sun–Sat UTC)
+- **Locate control** — include or block tests with modified Locate behaviour
+- **Sub-method flags** — `showIPv`, `showEarly`, `showNames`, `showName=` sub-selectors
+- **Extra flags** — free-text subselector flags appended to the method string
+- **Extended table fields** — upload throughput, linearMSS, RTO, fine throughput (not in cached)
+"""
+
 # Per-metric Plotly x-axis layout.  Ordered — determines left-to-right figure order.
 _METRIC_LAYOUTS = {
     "MeanThroughputMbps": {"type": "log",    "autorange": False, "range": [-0.3, 3.3], "gridcolor": "#333"},
@@ -237,6 +279,10 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
                 {'text': 'Verbose', 'value': 'Verbose'},
             ]
             v['current'] = {'value': 'none'}
+        elif name == 'radius':
+            v['current'] = {'value': '100'}   # prod default; exp dashboard has stale '1'
+        elif name == 'ISPcount':
+            v['current'] = {'value': '10'}    # match prod default
         elif name == 'region':
             v['default_select'] = 'all'
         elif name == 'ClientISP':
@@ -631,6 +677,9 @@ display(widgets.VBox([ctrl.box, _date_label, _date_row, w_run, out]))
 
 def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     info = classify_panels(dashboard)
+    # Exp: inject summary panel if the source dashboard has none.
+    if flavor == 'exp' and not info["summary"]:
+        info["summary"] = [_EXP_SUMMARY_PANEL]
     variables = serialize_variables(dashboard, flavor=flavor)
     method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'   else ""
     before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
@@ -647,8 +696,11 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
         intro = '\n'.join(intro_lines)
     # Always show exactly one title line.
     header = f"# {dashboard.title}" + (f"\n\n{intro}" if intro else "")
+    header_cells = [new_markdown_cell(header)]
+    if flavor == 'exp':
+        header_cells.append(new_markdown_cell(_EXP_FEATURES_MD))
     nb.cells = [
-        new_markdown_cell(header),
+        *header_cells,
         new_code_cell(_SETUP.format(variables_json=_compact_json(variables))),
         new_code_cell(_URL_PARAMS),
         new_code_cell(_CONTROLS.format(date_pickers=date_pickers)),
