@@ -80,7 +80,7 @@ target/
 
 # Converter staging output (regenerable; merged by hand into notebooks/)
 notebooks.stage/
-notebooks.test/
+notebooks.test/*.ipynb
 
 # IPython
 profile_default/
