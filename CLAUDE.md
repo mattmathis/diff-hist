@@ -117,15 +117,55 @@ kill $(lsof -t -i:8866)   # default port 8866
 
 ## GCE Deployment
 
-| Instance | IP | Purpose |
-|---|---|---|
-| `annealing` | 34.58.12.41 (static) | Primary public Voilà server |
-| `mm-byos-tester3` | 34.68.11.17 (ephemeral) | Reserved for limited testing only |
+| Instance | IP | Domain | Purpose |
+|---|---|---|---|
+| `annealing` | 34.58.12.41 (static) | annealing.mattmathis.net | Primary public Voilà server |
+| `mm-byos-tester3` | 34.68.11.17 (ephemeral) | — | Reserved for limited testing only |
 
 Voilà runs as a systemd service on both instances (starts on boot, restarts on crash).
-`annealing` has a static IP; `mm-byos-tester3` IP may change on stop/start.
+`annealing` has a static IP and nginx reverse proxy with TLS; `mm-byos-tester3` IP may change on stop/start.
 
-### Setup (one-time on the instance)
+### nginx + TLS setup (one-time on annealing)
+
+nginx proxies HTTPS traffic to Voilà on localhost:8866. TLS cert is managed by certbot (auto-renews via systemd timer).
+
+```bash
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+
+sudo tee /etc/nginx/sites-available/annealing << 'EOF'
+server {
+    listen 80;
+    server_name annealing.mattmathis.net;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8866;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600;
+        proxy_send_timeout 3600;
+    }
+}
+EOF
+
+sudo ln -sf /etc/nginx/sites-available/annealing /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl reload nginx
+
+sudo certbot --nginx -d annealing.mattmathis.net
+```
+
+certbot edits the nginx config to add the HTTPS server block and schedules auto-renewal.
+
+### Voilà systemd setup (one-time on the instance)
 
 ```bash
 sudo tee /etc/systemd/system/voila.service << 'EOF'
