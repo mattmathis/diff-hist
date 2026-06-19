@@ -27,8 +27,12 @@ from gen_deps import gen_all as _gen_deps              # noqa: E402
 
 
 def _detect_flavor(dashboard) -> str:
-    var_names  = {v.name for v in dashboard.variables}
+    var_names   = {v.name for v in dashboard.variables}
     panel_types = {p.type for p in dashboard.panels}
+    all_sql     = " ".join(t.raw_sql for p in dashboard.panels
+                           for t in p.targets if t.raw_sql)
+    if 'calibration_report' in all_sql:
+        return 'calibration'
     if 'methodsrc' in var_names:
         return 'exp'
     if 'method' in var_names:
@@ -43,7 +47,7 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dashboard", help="path to a Grafana dashboard JSON")
     ap.add_argument("--outdir", default="notebooks.stage")
-    ap.add_argument("--flavor", choices=["prod", "exp"], default=None,
+    ap.add_argument("--flavor", choices=["prod", "exp", "barchart", "fleet", "calibration"], default=None,
                     help="override auto-detected flavor")
     args = ap.parse_args()
 

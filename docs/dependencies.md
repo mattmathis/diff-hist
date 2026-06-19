@@ -18,6 +18,11 @@
 | `fleet_and_egress_load` | `global_fleet_inventory` | SQL | fleet egress inventory (table + map) |
 | `global_metro_bar_chart` | `cached_metadata` | SQL | server/site geo metadata (anchor & server dropdowns) |
 | `global_metro_bar_chart` | `cached_metro_report` | SQL | metro-level KS distance and spread (bar charts + dropdown) |
+| `m_lab_calibration_dashboard` | `cached_metadata` | SQL | server/site geo metadata (anchor & server dropdowns) |
+| `m_lab_calibration_dashboard` | `calibration_report` | SQL |  |
+| `m_lab_calibration_dashboard` | `access_ndt7_cached_histograms` | Python fetch_histograms (cached) | pre-computed histogram cache (PDF/CDF plots) |
+| `m_lab_calibration_dashboard` | `experimental_ndt7_isp_histograms` | Python fetch_histograms (exp / DS16 / DS1C) | live experimental histogram data (PDF/CDF plots) |
+| `m_lab_calibration_dashboard` | `unified_ndt7_isp_histograms` | Python fetch_histograms (live (no backend yet)) | live unified histogram data (PDF/CDF plots, no backend yet) |
 | `regional_details_dashboard` | `access_ndt7_cached_histograms` | SQL | pre-computed histogram cache (PDF/CDF plots) |
 | `regional_details_dashboard` | `access_ndt7_isp_histograms` | SQL | histogram wrapper — bypassed at runtime by fetch_histograms |
 | `regional_details_dashboard` | `cached_metadata` | SQL | server/site geo metadata (anchor & server dropdowns) |
@@ -57,6 +62,18 @@ Dashboard: `Global Metro Bar Chart-1780534460885.json`
 |---|---|---|---|
 | `cached_metadata` | table | SQL | server/site geo metadata (anchor & server dropdowns) |
 | `cached_metro_report` | table function | SQL | metro-level KS distance and spread (bar charts + dropdown) |
+
+### `m_lab_calibration_dashboard` (prod)
+
+Dashboard: `M-Lab Calibration Dashboard-1781841968104.json`
+
+| BQ resource | Kind | Access path | Role |
+|---|---|---|---|
+| `cached_metadata` | table | SQL | server/site geo metadata (anchor & server dropdowns) |
+| `calibration_report` | table function | SQL |  |
+| `access_ndt7_cached_histograms` | table function | Python fetch_histograms (cached) | pre-computed histogram cache (PDF/CDF plots) |
+| `experimental_ndt7_isp_histograms` | table function | Python fetch_histograms (exp / DS16 / DS1C) | live experimental histogram data (PDF/CDF plots) |
+| `unified_ndt7_isp_histograms` | table function | Python fetch_histograms (live (no backend yet)) | live unified histogram data (PDF/CDF plots, no backend yet) |
 
 ### `regional_details_dashboard` (prod)
 

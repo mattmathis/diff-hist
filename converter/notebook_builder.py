@@ -349,6 +349,34 @@ def _filter_for_fleet(variables: list[dict]) -> list[dict]:
     return out
 
 
+def _filter_for_calibration(variables: list[dict]) -> list[dict]:
+    """Variable filter for the calibration dashboard.
+
+    Drops infrastructure variables (datasource, dataset, detailURL) and
+    parameters locked as Python constants (method, xAxis, binSize).
+    Keeps the visible selectors: field, region, radius, ISPcount.
+
+    ${dataset} is pre-substituted in any query_sql (e.g. the region dropdown
+    query) since the dataset variable itself is dropped.
+    """
+    _DATASET = "mlab-collaboration.mm_preproduction"
+    drop = {'datasource', 'dataset', 'detailURL', 'method', 'xAxis', 'binSize'}
+    out = []
+    for v in variables:
+        v = dict(v)
+        name = v['name']
+        if name in drop:
+            continue
+        if v.get('query_sql'):
+            v['query_sql'] = v['query_sql'].replace('${dataset}', _DATASET)
+        if name == 'region':
+            v['default_select'] = 'all'
+        elif name == 'radius':
+            v['current'] = {'value': '100'}   # more useful default than '1'
+        out.append(v)
+    return out
+
+
 def _filter_for_barchart(variables: list[dict]) -> list[dict]:
     """Variable filter for bar-chart-only dashboards (e.g. Global Metro Bar Chart).
 
@@ -405,10 +433,13 @@ def serialize_variables(dashboard, flavor: str = 'prod') -> list[dict]:
         filtered = _filter_for_exp(out)
     elif flavor == 'fleet':
         filtered = _filter_for_fleet(out)
-        return filtered          # no metrics chooser for table-only dashboards
+        return filtered
     elif flavor == 'barchart':
         filtered = _filter_for_barchart(out)
-        return filtered          # no metrics chooser for bar-chart dashboards
+        return filtered
+    elif flavor == 'calibration':
+        filtered = _filter_for_calibration(out)
+        return filtered          # no metrics chooser; field dropdown is sufficient
     else:
         filtered = _filter_for_cached(out)
     return _add_metrics_var(filtered)
@@ -666,6 +697,75 @@ if url_params:
     render()
 '''
 
+_CALIBRATION_RENDER = '''\
+# --- Calibration panels ---
+_DATASET  = "mlab-collaboration.mm_preproduction"
+_METHOD   = "cached"   # expose in a later pass if live/exp needed
+_X_AXIS   = "none"
+_BIN_SIZE = 50
+
+out = widgets.Output()
+
+
+def _diagnostics(ctx):
+    rows = [(k, ", ".join(v) if isinstance(v, list) else str(v))
+            for k, v in ctx.items()]
+    return pd.DataFrame(rows, columns=["variable", "value"])
+
+
+def render(_=None):
+    ctx = ctrl.context()
+    to_dt   = (datetime.combine(w_to.value,   time(), tzinfo=timezone.utc)
+               if w_to   and w_to.value   else datetime.now(timezone.utc))
+    from_dt = (datetime.combine(w_from.value, time(), tzinfo=timezone.utc)
+               if w_from and w_from.value else to_dt - timedelta(days=7))
+
+    region_regex = qb.format_regex(ctx.get("region") or [])
+
+    out.clear_output(wait=True)
+    with out:
+        try:
+            df = rt.run_calibration_report(
+                client, _METHOD, _X_AXIS, _BIN_SIZE,
+                ctx.get("field", "MeanThroughputMbps"),
+                from_dt, to_dt,
+                region_regex,
+                int(ctx.get("radius", 100)),
+                int(ctx.get("ISPcount", 5)),
+                _DATASET,
+            )
+        except Exception as exc:
+            display(HTML(f"<pre>query failed: {exc}</pre>"))
+            df = None
+
+        if df is not None and not df.empty:
+            display(Markdown("### Scatter plot of KSdistance and ratio"))
+            _ratio_col = "Ratio" if "Ratio" in df.columns else "ratio"
+            _scatter_df = df[df[_ratio_col] >= 1.0].copy()
+            display(go.FigureWidget(rt.plotly_calibration_scatter(_scatter_df)))
+
+            display(Markdown("### Calibration report"))
+            _table_df = df.drop(columns=["BCargs", "Breadcrumb"], errors="ignore")
+            display(HTML(
+                \'<div style="height:500px;overflow:auto">\'
+                + _table_df.to_html(index=False, na_rep="")
+                + \'</div>\'
+            ))
+
+        _diag_out = widgets.Output()
+        with _diag_out:
+            display(_diagnostics(ctx))
+        _diag_acc = widgets.Accordion(children=[_diag_out])
+        _diag_acc.set_title(0, "Selector Diagnostics")
+        _diag_acc.selected_index = None
+        display(_diag_acc)
+
+
+w_run.on_click(render)
+if url_params:
+    render()
+'''
+
 _DISPLAY = '''\
 # --- Display the app ---
 _date_row = (widgets.HBox([w_from, w_to],
@@ -681,9 +781,9 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     if flavor == 'exp' and not info["summary"]:
         info["summary"] = [_EXP_SUMMARY_PANEL]
     variables = serialize_variables(dashboard, flavor=flavor)
-    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'   else ""
-    before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet' else ""
-    date_pickers    = _DATE_PICKERS_EXP    if flavor == 'exp'   else _DATE_PICKERS_NONE
+    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'                    else ""
+    before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet'                  else ""
+    date_pickers    = _DATE_PICKERS_EXP    if flavor in ('exp', 'calibration')   else _DATE_PICKERS_NONE
     nb = new_notebook()
     intro = info["intro"].strip()
     # Strip a leading "# Title" line from the intro — the Grafana text panel
@@ -699,18 +799,22 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     header_cells = [new_markdown_cell(header)]
     if flavor == 'exp':
         header_cells.append(new_markdown_cell(_EXP_FEATURES_MD))
-    nb.cells = [
-        *header_cells,
-        new_code_cell(_SETUP.format(variables_json=_compact_json(variables))),
-        new_code_cell(_URL_PARAMS),
-        new_code_cell(_CONTROLS.format(date_pickers=date_pickers)),
-        new_code_cell(_RENDER.format(
+    if flavor == 'calibration':
+        render_cell = new_code_cell(_CALIBRATION_RENDER)
+    else:
+        render_cell = new_code_cell(_RENDER.format(
             summary_panels_python=_panels_to_python(info["summary"]),
             metric_layouts_json=_compact_json(_METRIC_LAYOUTS),
             repeat_var=info["repeat_var"],
             method_preamble=method_preamble,
             before_table=before_table,
-        )),
+        ))
+    nb.cells = [
+        *header_cells,
+        new_code_cell(_SETUP.format(variables_json=_compact_json(variables))),
+        new_code_cell(_URL_PARAMS),
+        new_code_cell(_CONTROLS.format(date_pickers=date_pickers)),
+        render_cell,
         new_code_cell(_DISPLAY),
     ]
     nb.metadata.update({

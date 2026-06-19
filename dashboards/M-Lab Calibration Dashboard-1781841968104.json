@@ -1,0 +1,921 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Find server pairs with minimal deltas circa a target metro.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 534,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "xIXR1_LMz"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 121,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "# M-Lab Calibration Dashboard \n### Warning: This is a pre-release of experimental software.\nIt is not running on production infrastructure and is subject to changes or deletion without notification.\nFor general documentation on the methodology see the [README](/d/20251106a/).\n\nSites with high scores (ratio >> 1.0 or KSdistance >> 0.0)\nare probably not calibrated, and should be inspected by other means (e.g. the Regional Details Dashboard)\nto evaluate their health.\n\nThis dashboard presents a fast way to evaluate the most important MLab site performance metrics,\nbut does not provide complete coverage of all possible calibration problems.\n\nSee the [full documentation](https://docs.google.com/document/d/1t2oxmFSxNae6B89mR7whhaEn1ye1sIJi8CduKOlFDGc/edit?tab=t.0)\nfor a discussion of the limitations of this test.\n\n",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.1.3",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "The ratio is the geometric mean of the alternate site divided by the geometric mean of the target site.\nHigher values mean the target site is worse than the alternate site.  Ideally it should be close to 1.0 everywhere.\nThis plot excludes sites where the target is better than the alternate (ratio < 1.0), which would generally imply that the alternate site is not calibrated.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "axisSoftMin": 1,
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "pointSize": {
+              "fixed": 3
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "show": "points"
+          },
+          "fieldMinMax": false,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 122,
+      "options": {
+        "dims": {
+          "x": "spread"
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "series": [
+          {
+            "x": "Ratio",
+            "y": "KSdistance"
+          }
+        ],
+        "seriesMapping": "manual",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-bigquery-datasource",
+            "uid": "P116E76923C5457A4"
+          },
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "mlab-collaboration",
+          "rawQuery": true,
+          "rawSql": "\nSELECT Ratio, KSdistance, Breadcrumb\n-- FROM `${dataset}.cached_metro_report`(\"MeanThroughputMBPS\", \"${site:regex}\", ${ISPcount})\nFROM `${dataset}.calibration_report` (\"${method}\",\"${xAxis}\", ${binSize}, \"${field}\",\n  DATE(REGEXP_EXTRACT(\"${__from:date:iso}\", '[0-9]{4}-[0-9]{2}-[0-9]{2}')),\n  DATE(REGEXP_EXTRACT(\"${__to:date:iso}\", '[0-9]{4}-[0-9]{2}-[0-9]{2}')),\n  \"^(${region:regex})\",${radius}, ${ISPcount})\nWHERE ratio >= 1.0\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Scatter plot of KSdistance and ratio",
+      "type": "xychart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "${datasource}"
+      },
+      "description": "KSdistance should be near 0, and spread should be near 1.0.   If not, suspect a calibration problem. \n",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rank"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 45
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "name"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 261
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "tests"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 71
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Percent"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 67
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "metro"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 55
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Pct"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 35
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ISPrank"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 70
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "percent"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 69
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "KSdistance"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 104
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Spread"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 68
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pct"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 37
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "metric"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 246
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sites"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 47
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "calKS"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 68
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Gmean"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 66
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "level"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 142
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "KSoutlier"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 201
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Metric"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 174
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SPoutlier"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 196
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "targetSite"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 162
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "spread"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 101
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "inverse"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 121
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ratio"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 98
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "change"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 81
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "distance"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 92
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "triplets"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 113
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "distance_km"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 105
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "targetName"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 321
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "targetISPname"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 310
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "breadcrumb"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "targetBlank": true,
+                    "title": "Details",
+                    "url": "${detailURL:raw}﻿?${ISPcount:queryparam}&${radius:queryparam}&${__data.fields.BCargs}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "BCargs"
+            },
+            "properties": [
+              {
+                "id": "custom.hidden",
+                "value": true
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 26,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 20,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.1.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-bigquery-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "mlab-oti",
+          "rawQuery": true,
+          "rawSql": "\nSELECT * \n-- FROM `${dataset}.cached_metro_report`(\"MinRTT\", \"${site:regex}\", ${ISPcount})\nFROM `${dataset}.calibration_report` (\"${method}\",\"${xAxis}\", ${binSize}, \"${field}\",\n  DATE(REGEXP_EXTRACT(\"${__from:date:iso}\", '[0-9]{4}-[0-9]{2}-[0-9]{2}')),\n  DATE(REGEXP_EXTRACT(\"${__to:date:iso}\", '[0-9]{4}-[0-9]{2}-[0-9]{2}')),\n  \"^(${region:regex})\",${radius}, ${ISPcount}) \n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Calibration report",
+      "type": "table"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "Google BigQuery (mlab-collaboration)",
+          "value": "P116E76923C5457A4"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "grafana-bigquery-datasource",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "hide": 2,
+        "name": "dataset",
+        "query": "mlab-collaboration.mm_preproduction",
+        "skipUrlSync": false,
+        "type": "constant"
+      },
+      {
+        "hide": 2,
+        "name": "detailURL",
+        "query": "/d/20251103a/",
+        "skipUrlSync": false,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "cached",
+          "value": "cached"
+        },
+        "description": "Select processing stack version",
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "method",
+        "options": [
+          {
+            "selected": true,
+            "text": "cached",
+            "value": "cached"
+          },
+          {
+            "selected": false,
+            "text": "live",
+            "value": "live"
+          },
+          {
+            "selected": false,
+            "text": "experimental",
+            "value": "experimental"
+          }
+        ],
+        "query": "cached, live, experimental",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "MeanThroughputMbps",
+          "value": "MeanThroughputMbps"
+        },
+        "description": "Select the 4th data column.  (Linear fields don't display correctly.) \nMethod must be set to experimental FIRST.",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "field",
+        "options": [
+          {
+            "selected": true,
+            "text": "MeanThroughputMbps",
+            "value": "MeanThroughputMbps"
+          },
+          {
+            "selected": false,
+            "text": "uploadMeanThroughputMbps",
+            "value": "uploadMeanThroughputMbps"
+          },
+          {
+            "selected": false,
+            "text": "LossRate",
+            "value": "LossRate"
+          }
+        ],
+        "query": "MeanThroughputMbps, uploadMeanThroughputMbps, LossRate",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "grafana-bigquery-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "",
+        "description": "Used to select Client ISPs to be evaluated in  region. ",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Region",
+        "multi": true,
+        "name": "region",
+        "options": [],
+        "query": {
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "measurement-lab",
+          "rawQuery": true,
+          "rawSql": "# From: 2024-12-20 Prototype cached site picker  \n\nSELECT\n  CONCAT(metro, ' ', ContinentCode, ' ', City, ', ', CountryCode) AS text,\n  metro AS value,\nFROM (\n  SELECT\n    REGEXP_EXTRACT(site, '^([a-z]{3})') AS metro,\n    ANY_VALUE(ContinentCode) AS ContinentCode,\n    ANY_VALUE(City) AS City,\n    ANY_VALUE(CountryCode) AS CountryCode,\n    -- Uses ${datasource} implicitly\n  FROM `${dataset}.cached_metadata`\n  GROUP BY metro\n  ORDER BY  ContinentCode, CountryCode, metro\n)\n",
+          "refId": "tempvar",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "1",
+          "value": "1"
+        },
+        "description": "Radius from the anchor metro for selecting servers",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Radius (kM)",
+        "multi": false,
+        "name": "radius",
+        "options": [
+          {
+            "selected": true,
+            "text": "1",
+            "value": "1"
+          },
+          {
+            "selected": false,
+            "text": "100",
+            "value": "100"
+          },
+          {
+            "selected": false,
+            "text": "500",
+            "value": "500"
+          }
+        ],
+        "query": "1, 100, 500",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "none",
+          "value": "none"
+        },
+        "description": "Select time granularity for some experimental queries. ",
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "xAxis",
+        "options": [
+          {
+            "selected": true,
+            "text": "none",
+            "value": "none"
+          },
+          {
+            "selected": false,
+            "text": "day",
+            "value": "day"
+          },
+          {
+            "selected": false,
+            "text": "hour",
+            "value": "hour"
+          }
+        ],
+        "query": "none, day, hour",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "allValue": "400",
+        "current": {
+          "selected": false,
+          "text": "5",
+          "value": "5"
+        },
+        "description": "Number of ISPs to include when searching for calibration triplets",
+        "hide": 0,
+        "includeAll": false,
+        "label": "",
+        "multi": false,
+        "name": "ISPcount",
+        "options": [
+          {
+            "selected": true,
+            "text": "5",
+            "value": "5"
+          },
+          {
+            "selected": false,
+            "text": "2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "10",
+            "value": "10"
+          }
+        ],
+        "query": "5, 2, 10",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "description": "Shim",
+        "hide": 2,
+        "name": "binSize",
+        "query": "50",
+        "skipUrlSync": false,
+        "type": "constant"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "utc",
+  "title": "M-Lab Calibration Dashboard",
+  "uid": "20251107a",
+  "version": 26,
+  "weekStart": ""
+}

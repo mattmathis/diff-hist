@@ -798,6 +798,91 @@ def metro_nav_html(
     )
 
 
+def run_calibration_report(
+    client,
+    method: str = "cached",
+    x_axis: str = "none",
+    bin_size: int = 50,
+    field: str = "MeanThroughputMbps",
+    from_dt=None,
+    to_dt=None,
+    region_regex: str = ".*",
+    radius: int = 100,
+    isp_count: int = 5,
+    dataset: str = "mlab-collaboration.mm_preproduction",
+) -> pd.DataFrame:
+    """Run ``calibration_report`` and return all rows as a DataFrame."""
+    start = _date_str(from_dt)
+    end   = _date_str(to_dt)
+    sql = (
+        f'SELECT * FROM `{dataset}.calibration_report`'
+        f'("{method}", "{x_axis}", {bin_size}, "{field}",'
+        f' DATE "{start}", DATE "{end}",'
+        f' "^({region_regex})", {radius}, {isp_count})'
+    )
+    return run_query(client, sql)
+
+
+def plotly_calibration_scatter(df: pd.DataFrame) -> go.Figure:
+    """Scatter of KSdistance vs Ratio for calibration report data.
+
+    Points with Ratio > 2 are clamped to x=2 and shown with a triangle-up
+    marker so the viewer knows they exceed the bounding box.
+    """
+    fig = go.Figure()
+    if df is None or df.empty:
+        return fig
+
+    ratio_col = "Ratio" if "Ratio" in df.columns else "ratio"
+    ks_col    = "KSdistance" if "KSdistance" in df.columns else "ksdistance"
+    name_col  = next((c for c in ("name", "Name", "targetSite") if c in df.columns), None)
+
+    raw   = df[ratio_col].astype(float)
+    ks    = df[ks_col].astype(float)
+    capped = raw.clip(upper=2.0)
+    is_clamped = raw > 2.0
+
+    def _hover(mask):
+        parts = ks[mask].round(4).astype(str).radd("KSdistance: ")
+        parts = parts + "<br>Ratio: " + raw[mask].round(4).astype(str)
+        if name_col:
+            parts = df.loc[mask, name_col].astype(str) + "<br>" + parts
+        return parts
+
+    if (~is_clamped).any():
+        fig.add_trace(go.Scatter(
+            x=capped[~is_clamped], y=ks[~is_clamped],
+            mode="markers",
+            marker=dict(size=7, symbol="circle", color="steelblue", opacity=0.75),
+            text=_hover(~is_clamped),
+            hoverinfo="text",
+            name="ratio ≤ 2",
+        ))
+
+    if is_clamped.any():
+        fig.add_trace(go.Scatter(
+            x=capped[is_clamped], y=ks[is_clamped],
+            mode="markers",
+            marker=dict(size=9, symbol="triangle-up", color="coral", opacity=0.9),
+            text=_hover(is_clamped),
+            hoverinfo="text",
+            name="ratio > 2 (clamped to 2)",
+        ))
+
+    fig.update_layout(
+        xaxis=dict(title="Ratio (capped at 2)", range=[1.0, 2.05], gridcolor="#333"),
+        yaxis=dict(title="KS Distance", gridcolor="#333", rangemode="nonnegative"),
+        height=450,
+        margin=dict(l=55, r=20, t=30, b=45),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="grey"),
+        showlegend=True,
+        legend=dict(orientation="h", y=1.02, x=0),
+    )
+    return fig
+
+
 def plotly_grouped_figure(
     df: pd.DataFrame,
     layout: dict | None = None,
