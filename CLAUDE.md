@@ -141,6 +141,10 @@ server {
         root /var/www/html;
     }
 
+    location = / {
+        return 302 /voila/render/index.ipynb;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8866;
         proxy_http_version 1.1;
@@ -164,6 +168,8 @@ sudo certbot --nginx -d annealing.mattmathis.net
 ```
 
 certbot edits the nginx config to add the HTTPS server block and schedules auto-renewal.
+After certbot runs, add the `location = /` redirect to `sites-enabled/annealing` manually
+(certbot rewrites `sites-available` so the pre-certbot tee may not survive).
 
 ### Voilà systemd setup (one-time on the instance)
 
