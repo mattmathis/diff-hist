@@ -268,6 +268,11 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
         name = v['name']
         if name in ('mode', 'method', 'field'):
             continue
+        elif name == 'methodsrc':
+            if not any(o['value'] == 'live' for o in v.get('options', [])):
+                cached_idx = next((i for i, o in enumerate(v['options'])
+                                   if o['value'] == 'cached'), len(v['options']) - 1)
+                v['options'].insert(cached_idx + 1, {'text': 'live', 'value': 'live'})
         elif name == 'verbose':
             # Same three-way table_style chooser as prod.
             v['name'] = 'table_style'
@@ -360,7 +365,7 @@ def _filter_for_calibration(variables: list[dict]) -> list[dict]:
     query) since the dataset variable itself is dropped.
     """
     _DATASET = "mlab-collaboration.mm_preproduction"
-    drop = {'datasource', 'dataset', 'detailURL', 'method', 'xAxis', 'binSize'}
+    drop = {'datasource', 'dataset', 'detailURL', 'xAxis', 'binSize'}
     out = []
     for v in variables:
         v = dict(v)
@@ -369,11 +374,81 @@ def _filter_for_calibration(variables: list[dict]) -> list[dict]:
             continue
         if v.get('query_sql'):
             v['query_sql'] = v['query_sql'].replace('${dataset}', _DATASET)
-        if name == 'region':
+        if name == 'method':
+            v['options'] = [o for o in v['options']
+                            if o['value'] in ('cached', 'live')]
+            v['current'] = {'value': 'cached'}
+            v['hide'] = 0
+        elif name == 'region':
             v['default_select'] = 'all'
         elif name == 'radius':
-            v['current'] = {'value': '100'}   # more useful default than '1'
+            v['current'] = {'value': '100'}
         out.append(v)
+    return out
+
+
+_ORG_QUERY = (
+    "SELECT text, value FROM ("
+    " SELECT 'All orgs' AS text, '.*' AS value, 0 AS _sort"
+    " UNION ALL"
+    " SELECT DISTINCT"
+    "  REGEXP_EXTRACT(site, r'ndt-[a-z0-9]+-[a-z0-9]+\\.([a-z-]+)\\.') AS text,"
+    "  REGEXP_EXTRACT(site, r'ndt-[a-z0-9]+-[a-z0-9]+\\.([a-z-]+)\\.') AS value,"
+    "  1 AS _sort"
+    " FROM `mlab-collaboration.mm_preproduction.cached_metadata`"
+    " WHERE REGEXP_EXTRACT(site, r'ndt-[a-z0-9]+-[a-z0-9]+\\.([a-z-]+)\\.') IS NOT NULL"
+    ") ORDER BY _sort, text"
+)
+
+
+def _filter_for_internal(variables: list[dict]) -> list[dict]:
+    """Variable filter for internal competition-report dashboards.
+
+    Drops: datasource, PromSource, autoOrg, dataset, detailURL, dateRange.
+    Replaces organization with a BQ-backed query variable; default '.*' (all orgs).
+    Keeps: method (cached/live), radius, ISPcount.
+    """
+    drop = {'datasource', 'PromSource', 'autoOrg', 'dataset', 'detailURL', 'dateRange'}
+    out = []
+    org_inserted = False
+    for v in variables:
+        v = dict(v)
+        name = v['name']
+        if name in drop:
+            continue
+        if name == 'organization':
+            v['type'] = 'query'
+            v['query_sql'] = _ORG_QUERY
+            v['options'] = [{'text': 'All orgs', 'value': '.*'}]
+            v['current'] = {'value': '.*'}
+            v['multi'] = False
+            v['hide'] = 0
+            org_inserted = True
+        elif name == 'method':
+            v['options'] = [o for o in v['options']
+                            if o['value'] in ('cached', 'live')]
+            v['current'] = {'value': 'cached'}
+            v['hide'] = 0
+        out.append(v)
+    if not org_inserted:
+        out.insert(0, {
+            'name': 'organization', 'type': 'query',
+            'label': 'Organization', 'description': 'M-Lab hosting organization.',
+            'hide': 0, 'multi': False,
+            'options': [{'text': 'All orgs', 'value': '.*'}],
+            'current': {'value': '.*'},
+            'query_sql': _ORG_QUERY,
+        })
+    if not any(v['name'] == 'method' for v in out):
+        out.insert(0, {
+            'name': 'method', 'type': 'custom',
+            'label': 'Method', 'description': 'Data source backend.',
+            'hide': 0, 'multi': False,
+            'options': [{'text': 'cached', 'value': 'cached'},
+                        {'text': 'live',   'value': 'live'}],
+            'current': {'value': 'cached'},
+            'query_sql': None,
+        })
     return out
 
 
@@ -439,7 +514,10 @@ def serialize_variables(dashboard, flavor: str = 'prod') -> list[dict]:
         return filtered
     elif flavor == 'calibration':
         filtered = _filter_for_calibration(out)
-        return filtered          # no metrics chooser; field dropdown is sufficient
+        return filtered
+    elif flavor == 'internal':
+        filtered = _filter_for_internal(out)
+        return filtered
     else:
         filtered = _filter_for_cached(out)
     return _add_metrics_var(filtered)
@@ -538,7 +616,11 @@ if _env:
     url_params.update(json.loads(_env))
 '''
 
-# Date-picker block for exp/live flavors; other flavors get the null version.
+# Date-picker blocks — three variants:
+#   _DATE_PICKERS_EXP      start + end DatePickers  (exp notebook)
+#   _DATE_PICKERS_DURATION end DatePicker + duration dropdown  (calibration, internal)
+#   _DATE_PICKERS_NONE     no date widgets
+# All three define w_from, w_to, w_duration so _DISPLAY can be unconditional.
 _DATE_PICKERS_EXP = """\
 
 # Date range for experimental/live backends — ignored when method=cached.
@@ -547,12 +629,31 @@ _today_utc  = datetime.now(timezone.utc).date()
 _days_back  = (_today_utc.weekday() + 1) % 7   # 0 on Sunday, 1 on Monday …
 _end_date   = _today_utc - timedelta(days=_days_back)
 _start_date = _end_date  - timedelta(days=6)
-w_to   = widgets.DatePicker(value=_end_date,   description='End (UTC)',
-                             style={"description_width": "90px"})
-w_from = widgets.DatePicker(value=_start_date, description='Start (UTC)',
-                             style={"description_width": "90px"})
+w_to       = widgets.DatePicker(value=_end_date,   description='End (UTC)',
+                                style={"description_width": "90px"})
+w_from     = widgets.DatePicker(value=_start_date, description='Start (UTC)',
+                                style={"description_width": "90px"})
+w_duration = None
 """
-_DATE_PICKERS_NONE = "\nw_from = w_to = None\n"
+
+_DATE_PICKERS_DURATION = """\
+
+# End date + duration — ignored when method=cached.
+# End defaults to the most recent Sunday (UTC); duration defaults to 7 days.
+_today_utc  = datetime.now(timezone.utc).date()
+_days_back  = (_today_utc.weekday() + 1) % 7
+_end_date   = _today_utc - timedelta(days=_days_back)
+w_to       = widgets.DatePicker(value=_end_date, description='End (UTC)',
+                                style={"description_width": "90px"})
+w_duration = widgets.Dropdown(
+    options=[("1 day", 1), ("7 days", 7), ("30 days", 30)],
+    value=7, description='Duration',
+    style={"description_width": "90px"},
+)
+w_from = None
+"""
+
+_DATE_PICKERS_NONE = "\nw_from = w_to = w_duration = None\n"
 
 _CONTROLS = '''\
 # --- Dashboard controls (dropdowns; query-backed ones are chained) ---
@@ -610,12 +711,17 @@ def render(_=None):
                     _df = None
                 if _df is not None:
                     if p.get("type") == "barchart":
-                        _fig = rt.metro_barchart(
-                            _df, isp_count=ctx.get("ISPcount", "5"))
-                        _fig._config = {{"responsive": False}}
-                        display(_fig)
-                        display(HTML(rt.metro_nav_html(
-                            _df, isp_count=ctx.get("ISPcount", "5"))))
+                        import ipywidgets as _ipyw
+                        _link = _ipyw.HTML(
+                            value='<p style="color:#888;font-size:12px">'
+                                  '&#8592; click a bar to open Regional Details</p>'
+                        )
+                        _fw = rt.metro_barchart_clickable(
+                            _df, isp_count=ctx.get("ISPcount", "5"),
+                            link_widget=_link)
+                        _fw._config = {{"responsive": False}}
+                        display(_fw)
+                        display(_link)
                     else:
 {before_table}                        display(HTML(
                             '<div style="height:500px;overflow:auto">'
@@ -700,7 +806,6 @@ if url_params:
 _CALIBRATION_RENDER = '''\
 # --- Calibration panels ---
 _DATASET  = "mlab-collaboration.mm_preproduction"
-_METHOD   = "cached"   # expose in a later pass if live/exp needed
 _X_AXIS   = "none"
 _BIN_SIZE = 50
 
@@ -715,18 +820,22 @@ def _diagnostics(ctx):
 
 def render(_=None):
     ctx = ctrl.context()
-    to_dt   = (datetime.combine(w_to.value,   time(), tzinfo=timezone.utc)
-               if w_to   and w_to.value   else datetime.now(timezone.utc))
-    from_dt = (datetime.combine(w_from.value, time(), tzinfo=timezone.utc)
-               if w_from and w_from.value else to_dt - timedelta(days=7))
+    method  = ctx.get("method", "cached")
+    to_dt   = (datetime.combine(w_to.value, time(), tzinfo=timezone.utc)
+               if w_to and w_to.value else datetime.now(timezone.utc))
+    from_dt = to_dt - timedelta(days=w_duration.value if w_duration else 7)
 
     region_regex = qb.format_regex(ctx.get("region") or [])
 
     out.clear_output(wait=True)
     with out:
+        if method == "cached":
+            _date_label.value = (
+                '<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> '
+                + rt.get_cached_date_range(client, _DATASET) + '</div>')
         try:
             df = rt.run_calibration_report(
-                client, _METHOD, _X_AXIS, _BIN_SIZE,
+                client, method, _X_AXIS, _BIN_SIZE,
                 ctx.get("field", "MeanThroughputMbps"),
                 from_dt, to_dt,
                 region_regex,
@@ -766,11 +875,77 @@ if url_params:
     render()
 '''
 
+_INTERNAL_RENDER = '''\
+# --- Competition report panels ---
+_DATASET     = "mlab-collaboration.mm_preproduction"
+_REPORT_TYPE = "{report_type}"   # minRTT or throughput
+_X_AXIS      = "none"
+_BIN_SIZE    = 50
+
+out = widgets.Output()
+
+
+def _diagnostics(ctx):
+    rows = [(k, ", ".join(v) if isinstance(v, list) else str(v))
+            for k, v in ctx.items()]
+    return pd.DataFrame(rows, columns=["variable", "value"])
+
+
+def render(_=None):
+    ctx = ctrl.context()
+    method  = ctx.get("method", "cached")
+    to_dt   = (datetime.combine(w_to.value, time(), tzinfo=timezone.utc)
+               if w_to and w_to.value else datetime.now(timezone.utc))
+    from_dt = to_dt - timedelta(days=w_duration.value if w_duration else 7)
+
+    out.clear_output(wait=True)
+    with out:
+        if method == "cached":
+            _date_label.value = (
+                \'<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> \'
+                + rt.get_cached_date_range(client, _DATASET) + \'</div>\')
+        try:
+            df = rt.run_competition_report(
+                client, _REPORT_TYPE, method,
+                ctx.get("organization", ".*"),
+                int(ctx.get("radius", 100)),
+                int(ctx.get("ISPcount", 5)),
+                from_dt, to_dt,
+                _DATASET,
+            )
+        except Exception as exc:
+            display(HTML(f"<pre>query failed: {{exc}}</pre>"))
+            df = None
+
+        if df is not None and not df.empty:
+            display(HTML(
+                \'<div style="height:600px;overflow:auto">\'
+                + df.to_html(index=False, na_rep="")
+                + \'</div>\'
+            ))
+
+        _diag_out = widgets.Output()
+        with _diag_out:
+            display(_diagnostics(ctx))
+        _diag_acc = widgets.Accordion(children=[_diag_out])
+        _diag_acc.set_title(0, "Selector Diagnostics")
+        _diag_acc.selected_index = None
+        display(_diag_acc)
+
+
+w_run.on_click(render)
+if url_params:
+    render()
+'''
+
 _DISPLAY = '''\
 # --- Display the app ---
-_date_row = (widgets.HBox([w_from, w_to],
-                          layout=widgets.Layout(margin='2px 0'))
-             if w_from is not None else widgets.HTML(''))
+if w_from is not None:
+    _date_row = widgets.HBox([w_from, w_to], layout=widgets.Layout(margin='2px 0'))
+elif w_to is not None and w_duration is not None:
+    _date_row = widgets.HBox([w_to, w_duration], layout=widgets.Layout(margin='2px 0'))
+else:
+    _date_row = widgets.HTML('')
 display(widgets.VBox([ctrl.box, _date_label, _date_row, w_run, out]))
 '''
 
@@ -781,9 +956,11 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     if flavor == 'exp' and not info["summary"]:
         info["summary"] = [_EXP_SUMMARY_PANEL]
     variables = serialize_variables(dashboard, flavor=flavor)
-    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'                    else ""
-    before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet'                  else ""
-    date_pickers    = _DATE_PICKERS_EXP    if flavor in ('exp', 'calibration')   else _DATE_PICKERS_NONE
+    method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'                          else ""
+    before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet'                        else ""
+    date_pickers    = (_DATE_PICKERS_EXP      if flavor == 'exp'
+                       else _DATE_PICKERS_DURATION if flavor in ('calibration', 'internal')
+                       else _DATE_PICKERS_NONE)
     nb = new_notebook()
     intro = info["intro"].strip()
     # Strip a leading "# Title" line from the intro — the Grafana text panel
@@ -801,6 +978,11 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
         header_cells.append(new_markdown_cell(_EXP_FEATURES_MD))
     if flavor == 'calibration':
         render_cell = new_code_cell(_CALIBRATION_RENDER)
+    elif flavor == 'internal':
+        # Detect report type from panel SQL.
+        all_sql = " ".join(p.get("sql", "") for p in info["summary"] + info["repeat_panels"])
+        report_type = "throughput" if "throughput_competition_report" in all_sql else "minRTT"
+        render_cell = new_code_cell(_INTERNAL_RENDER.format(report_type=report_type))
     else:
         render_cell = new_code_cell(_RENDER.format(
             summary_panels_python=_panels_to_python(info["summary"]),
@@ -836,6 +1018,9 @@ def write_notebook(dashboard, dashboard_path: str,
     nb = build_notebook(dashboard, flavor=flavor)
     out = Path(outdir)
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"{_slug(dashboard.title)}.ipynb"
+    slug = _slug(dashboard.title)
+    if flavor == 'internal':
+        slug = re.sub(r'_do_not_share$', '', slug)
+    path = out / f"{slug}.ipynb"
     nbformat.write(nb, str(path))
     return path

@@ -36,7 +36,7 @@ project/
 │   ├── runtime.py          # BQ client, run_query, variable_options;
 │   │                       #   fetch_histograms (Python dispatch + densification);
 │   │                       #   plotly_combined_figure (PDF+CDF dual-axis figure);
-│   │                       #   metro_barchart, metro_nav_html (bar chart + links);
+│   │                       #   metro_barchart, metro_barchart_clickable (bar chart + click nav);
 │   │                       #   fleet_map (Scattergeo world map);
 │   │                       #   asn_regex; legacy SQL-transform helpers
 │   ├── notebook_builder.py # Assemble .ipynb; serialize/filter variables;
@@ -332,17 +332,16 @@ fetched via `fetch_histograms`, not SQL templates.
   notebook always opens on a recent date rather than the stale Grafana value.
 - No metrics chooser; table-only layout.
 
-### Bar chart navigation (`runtime.metro_barchart`, `runtime.metro_nav_html`)
+### Bar chart navigation (`runtime.metro_barchart`, `runtime.metro_barchart_clickable`)
 
 `metro_barchart(df, title, isp_count, target_notebook)` — grouped Plotly bar chart
-with `customdata` URL fields and hover hints. `display(fig)` + `fig._config =
+with `customdata` URL fields. `display(fig)` + `fig._config =
 {'responsive': False}` prevents plot-area reflow when a second chart is shown.
 
-`metro_nav_html(df, isp_count, target_notebook)` — plain HTML `<div>/<ul>/<a href>`
-navigation list rendered always-visible below each chart. Replaces all
-JS-based click approaches (FigureWidget.on_click, display(Javascript(…)),
-`<script>` tags) which fail in Voilà due to JupyterLab version mismatch or
-HTML sanitisation.
+`metro_barchart_clickable(df, isp_count, target_notebook, link_widget)` — wraps the
+figure in a `FigureWidget`; clicking a bar updates *link_widget* (an
+`ipywidgets.HTML`) with a navigation link to Regional Details. Works in Voilà
+because it uses a Python `on_click` callback to update a widget — no JS injection.
 
 ### Fleet global map (`runtime.fleet_map`)
 

@@ -525,24 +525,24 @@ def plotly_combined_figure(
         legend=dict(
             orientation='h', x=0.5, y=0.50,
             xanchor='center', yanchor='middle',
-            font=dict(size=11),
+            font=dict(size=13),
         ),
         margin=dict(l=50, r=55, t=22, b=15),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='grey'),
+        font=dict(color='#bbb'),
         xaxis=xaxis,
         yaxis=dict(
-            title=dict(text='PDF', font=dict(size=10)),
+            title=dict(text='PDF', font=dict(size=12)),
             domain=[0, 0.44], side='left',
             gridcolor='#333', rangemode='nonnegative',
-            tickfont=dict(size=9),
+            tickfont=dict(size=11),
         ),
         yaxis2=dict(
-            title=dict(text='CDF', font=dict(size=10)),
+            title=dict(text='CDF', font=dict(size=12)),
             domain=[0.56, 1.0], range=[0, 1],
             side='right', gridcolor='#333',
-            tickfont=dict(size=9),
+            tickfont=dict(size=11),
         ),
     )
     return fig
@@ -652,26 +652,29 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
         height=700,
         margin=dict(l=0, r=0, t=5, b=0),
         paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='grey'),
+        font=dict(color='#bbb'),
         showlegend=False,
     )
     return fig
 
 
-def metro_barchart_with_links(
+def metro_barchart_clickable(
     df: pd.DataFrame,
     isp_count: int | str = 5,
     target_notebook: str = "regional_details_dashboard",
+    link_widget=None,
 ) -> "go.FigureWidget":
     """Metro bar chart with click-to-navigate to Regional Details.
 
-    Clicking any bar extracts the 3-letter metro code from the x-axis label
-    (format: "City CC (abc)"), builds a Voilà-relative URL for the Regional
-    Details notebook with ``anchor=<metro>&ISPcount=<isp_count>`` pre-set,
-    opens it in a new browser tab, and displays a clickable link in the output.
-    All other Regional Details parameters use their defaults.
+    Clicking a bar updates *link_widget* (an ``ipywidgets.HTML``) with a
+    navigation link — no Javascript injection required, works in Voilà.
+    If *link_widget* is None a new one is created (caller should display it).
     """
     import re as _re
+    import ipywidgets as _ipyw
+
+    if link_widget is None:
+        link_widget = _ipyw.HTML()
 
     fw = go.FigureWidget(metro_barchart(df))
 
@@ -685,13 +688,11 @@ def metro_barchart_with_links(
         anchor = m.group(1)
         url = (f"/voila/render/{target_notebook}.ipynb"
                f"?anchor={anchor}&ISPcount={isp_count}")
-        from IPython.display import display as _d, HTML as _H, Javascript as _J
-        _d(_H(
-            f'<p style="margin:4px 0">→ <a href="{url}" target="_blank"'
-            f' style="font-size:13px"><b>{name}</b> — Regional Details'
-            f' (ISPcount={isp_count})</a></p>'
-        ))
-        _d(_J(f"window.open('{url}', '_blank')"))
+        link_widget.value = (
+            f'<p style="margin:6px 0;font-size:14px">'
+            f'&#8599; <a href="{url}" target="_blank">'
+            f'<b>{name}</b> — Regional Details (ISPcount={isp_count})</a></p>'
+        )
 
     for trace in fw.data:
         trace.on_click(_on_click)
@@ -749,16 +750,16 @@ def metro_barchart(
                 ),
             ))
     fig.update_layout(
-        title=dict(text=title, font=dict(size=11)) if title else None,
+        title=dict(text=title, font=dict(size=13)) if title else None,
         barmode='group',
         height=500,
-        xaxis=dict(tickangle=-45, tickfont=dict(size=8)),
-        yaxis=dict(gridcolor='#333'),
+        xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
+        yaxis=dict(gridcolor='#333', title=dict(font=dict(size=12)), tickfont=dict(size=11)),
         margin=dict(l=50, r=20, t=35, b=130),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='grey'),
-        legend=dict(orientation='h', y=1.02, x=0),
+        font=dict(color='#bbb'),
+        legend=dict(orientation='h', y=1.02, x=0, font=dict(size=13)),
         showlegend=True,
     )
     return fig
@@ -796,6 +797,34 @@ def metro_nav_html(
         + "\n".join(rows)
         + "</ul></div>"
     )
+
+
+def run_competition_report(
+    client,
+    report_type: str = "minRTT",
+    method: str = "cached",
+    org: str = ".*",
+    radius: int = 100,
+    isp_count: int = 5,
+    from_dt=None,
+    to_dt=None,
+    dataset: str = "mlab-collaboration.mm_preproduction",
+) -> pd.DataFrame:
+    """Run ``minRTT_competition_report`` or ``throughput_competition_report``.
+
+    ``report_type`` selects the BQ function (``'minRTT'`` or ``'throughput'``).
+    ``BCargs`` and ``Breadcrumb`` columns are stripped — breadcrumb navigation
+    is deferred to a later pass.
+    """
+    start = _date_str(from_dt)
+    end   = _date_str(to_dt)
+    fn = f"{report_type}_competition_report"
+    sql = (
+        f'SELECT * FROM `{dataset}.{fn}`'
+        f'("{method}", "{start}", "{end}", "{org}", {radius}, {isp_count})'
+    )
+    df = run_query(client, sql)
+    return df.drop(columns=["BCargs", "Breadcrumb"], errors="ignore")
 
 
 def run_calibration_report(
@@ -870,15 +899,17 @@ def plotly_calibration_scatter(df: pd.DataFrame) -> go.Figure:
         ))
 
     fig.update_layout(
-        xaxis=dict(title="Ratio (capped at 2)", range=[1.0, 2.05], gridcolor="#333"),
-        yaxis=dict(title="KS Distance", gridcolor="#333", rangemode="nonnegative"),
+        xaxis=dict(title=dict(text="Ratio (capped at 2)", font=dict(size=12)),
+                   range=[1.0, 2.05], gridcolor="#333", tickfont=dict(size=11)),
+        yaxis=dict(title=dict(text="KS Distance", font=dict(size=12)),
+                   gridcolor="#333", rangemode="nonnegative", tickfont=dict(size=11)),
         height=450,
         margin=dict(l=55, r=20, t=30, b=45),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="grey"),
+        font=dict(color="#bbb"),
         showlegend=True,
-        legend=dict(orientation="h", y=1.02, x=0),
+        legend=dict(orientation="h", y=1.02, x=0, font=dict(size=13)),
     )
     return fig
 

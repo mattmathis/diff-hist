@@ -31,6 +31,8 @@ def _detect_flavor(dashboard) -> str:
     panel_types = {p.type for p in dashboard.panels}
     all_sql     = " ".join(t.raw_sql for p in dashboard.panels
                            for t in p.targets if t.raw_sql)
+    if 'competition_report' in all_sql:
+        return 'internal'
     if 'calibration_report' in all_sql:
         return 'calibration'
     if 'methodsrc' in var_names:
@@ -47,13 +49,16 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dashboard", help="path to a Grafana dashboard JSON")
     ap.add_argument("--outdir", default="notebooks.stage")
-    ap.add_argument("--flavor", choices=["prod", "exp", "barchart", "fleet", "calibration"], default=None,
+    ap.add_argument("--flavor", choices=["prod", "exp", "barchart", "fleet", "calibration", "internal"], default=None,
                     help="override auto-detected flavor")
     args = ap.parse_args()
 
     dash = parse_dashboard(args.dashboard)
     flavor = args.flavor or _detect_flavor(dash)
-    path = write_notebook(dash, args.dashboard, outdir=args.outdir, flavor=flavor)
+    outdir = args.outdir
+    if flavor == 'internal' and outdir == 'notebooks.stage':
+        outdir = 'notebooks.stage/internal'
+    path = write_notebook(dash, args.dashboard, outdir=outdir, flavor=flavor)
     print(f"Wrote {path}  ({len(dash.panels)} panels, "
           f"{len(dash.variables)} variables, flavor={flavor})")
     _gen_deps()   # keep docs/dependencies.md current
