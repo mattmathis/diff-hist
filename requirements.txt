@@ -1,0 +1,10 @@
+jupyter
+voila
+ipywidgets
+plotly
+nbformat
+google-cloud-bigquery
+db-dtypes
+anywidget
+pandas
+nbstripout

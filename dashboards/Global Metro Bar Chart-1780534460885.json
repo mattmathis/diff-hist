@@ -1,0 +1,493 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [],
+          "type": "dashboard"
+        },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "For publication.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 497,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "xIXR1_LMz"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 14,
+        "x": 0,
+        "y": 0
+      },
+      "id": 24,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "# Global Metro Bar Chart \n### Warning: This is a pre-release of experimental software.\nIt is not running on production infrastructure and is subject to changes or deletion without notification.\nFor documentation see the [README](/d/20251106a/) or scroll down for basic information. \n\nEvaluate the interconnections between ISPs by measuring differences in performance to MLab servers\nfrom each of the N largest Client ISPs in the metro.\nIf the score is poor it means that users attached to a some ISPs get different performances\nto the different MLab servers,\nindicating non-uniform connectivity between the ISPs.\n\nThe metrics are: KSdistance (0 is ideal), the worst case vertical distance between the cdf distributions;\nand spread (1 is ideal), the worst case ratio of the geometric means.\nTo make it more visible, KSdistance is scaled 10x,\nsuch that 10 is the worst possible score, indicating non-overlapping distributions.\n\nThis data is precomputed for the date range shown, and can't be adjusted in this version of the dashboard.\n\nTo see the entire MLab fleet select verbose,\nwhich also shows singleton MLab sites that can't be analyzed by this technique.\nThese sites show 0 spread.\n\n\n",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.1.3",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Detailed Plots",
+              "url": "${detailURL:raw}&var-site=${__data.fields.metro}﻿&var-rank=${ISPcount:raw}&var-mode=pdf"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 23,
+        "x": 0,
+        "y": 5
+      },
+      "id": 21,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": true,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-bigquery-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "mlab-oti",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  name,\n  KSdistance*10 AS scaledKSdistance,\n  IF (Sites != '1', spread, 0) AS Spread,\n  Continent,\n  metro,\n-- ${datasource} is implicit\nFROM `${dataset}.cached_metro_report`(\"MinRTT\", \".*\", ${ISPcount})\n  JOIN (\n    SELECT\n      REGEXP_EXTRACT(site, '^([a-z]{3})') AS metro,\n      ANY_VALUE(FORMAT('%t %t (%t)', City, CountryCode,  REGEXP_EXTRACT(site, '^([a-z]{3})'))) AS name,\n      ANY_VALUE(ContinentCode) AS Continent,\n      ANY_VALUE(FORMAT('%t %t %t', ContinentCode, CountryCode , City )) AS sortKey, \n    FROM `${dataset}.cached_metadata`\n    GROUP BY metro\n  ) USING (metro)\nWHERE level like 'Metro%%'\n  AND (\"${verbose}\" = 'yes' OR Sites != '1')\nORDER BY sortKey\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Minimum RTT pain indications",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-bigquery-datasource",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineWidth": 1,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "links": [
+            {
+              "targetBlank": true,
+              "title": "Show Plots",
+              "url": "${detailURL:raw}&var-site=${__data.fields.metro}﻿&var-rank=${ISPcount:raw}&var-mode=pdf"
+            }
+          ],
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 13,
+        "w": 23,
+        "x": 0,
+        "y": 18
+      },
+      "id": 22,
+      "options": {
+        "barRadius": 0,
+        "barWidth": 0.97,
+        "fullHighlight": true,
+        "groupWidth": 0.7,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showValue": "auto",
+        "stacking": "none",
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        },
+        "xTickLabelRotation": -45,
+        "xTickLabelSpacing": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-bigquery-datasource",
+            "uid": "${datasource}"
+          },
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "mlab-oti",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  name,\n  KSdistance*10 AS scaledKSdistance,\n  IF (Sites != '1', spread, 0) AS Spread,\n  Continent,\n  metro,\n-- ${datasource} is implicit\nFROM `${dataset}.cached_metro_report`(\"MeanThroughputMbps\", \".*\", ${ISPcount})\n  JOIN (\n    SELECT\n      REGEXP_EXTRACT(site, '^([a-z]{3})') AS metro,\n      ANY_VALUE(FORMAT('%t %t (%t)', City, CountryCode,  REGEXP_EXTRACT(site, '^([a-z]{3})'))) AS name,\n      ANY_VALUE(ContinentCode) AS Continent,\n      ANY_VALUE(FORMAT('%t %t %t', ContinentCode, CountryCode , City )) AS sortKey, \n    FROM `${dataset}.cached_metadata`\n    GROUP BY metro\n  ) USING (metro)\nWHERE level like 'Metro%%'\n  AND (\"${verbose}\" = 'yes' OR Sites != '1')\nORDER BY sortKey\n",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        }
+      ],
+      "title": "Throughput pain indications",
+      "type": "barchart"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "Google BigQuery (mlab-collaboration)",
+          "value": "P116E76923C5457A4"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "grafana-bigquery-datasource",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "hide": 2,
+        "name": "dataset",
+        "query": "mlab-collaboration.mm_preproduction",
+        "skipUrlSync": false,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "Platform Cluster (mlab-oti)",
+          "value": "WW1Jk2sGk"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "prometheus",
+        "options": [],
+        "query": "prometheus",
+        "queryValue": "",
+        "refresh": 1,
+        "regex": "/Platform Cluster/",
+        "skipUrlSync": false,
+        "type": "datasource"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "5",
+          "value": "5"
+        },
+        "description": "Number of ISPs to include",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Client ISPs",
+        "multi": false,
+        "name": "ISPcount",
+        "options": [
+          {
+            "selected": false,
+            "text": "2",
+            "value": "2"
+          },
+          {
+            "selected": false,
+            "text": "3",
+            "value": "3"
+          },
+          {
+            "selected": false,
+            "text": "4",
+            "value": "4"
+          },
+          {
+            "selected": true,
+            "text": "5",
+            "value": "5"
+          },
+          {
+            "selected": false,
+            "text": "10",
+            "value": "10"
+          },
+          {
+            "selected": false,
+            "text": "20",
+            "value": "20"
+          },
+          {
+            "selected": false,
+            "text": "50",
+            "value": "50"
+          }
+        ],
+        "query": "2,3,4,5,10,20,50",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "no",
+          "value": "no"
+        },
+        "description": "Also include metros with only one MLab site.  This algorithm does not work for these metros.",
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "verbose",
+        "options": [
+          {
+            "selected": true,
+            "text": "no",
+            "value": "no"
+          },
+          {
+            "selected": false,
+            "text": "yes",
+            "value": "yes"
+          }
+        ],
+        "query": "no, yes",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "hide": 2,
+        "name": "detailURL",
+        "query": "/d/20250114a?orgId=1",
+        "skipUrlSync": false,
+        "type": "constant"
+      },
+      {
+        "current": {
+          "selected": false,
+          "text": "0 2026-05-22 - 2026-05-28 Cached",
+          "value": "0 2026-05-22 - 2026-05-28 Cached"
+        },
+        "datasource": {
+          "type": "grafana-bigquery-datasource",
+          "uid": "${datasource}"
+        },
+        "definition": "",
+        "description": "Dates of the data in the precomputed histograms.",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Date Range",
+        "multi": false,
+        "name": "dates",
+        "options": [],
+        "query": {
+          "editorMode": "code",
+          "format": 1,
+          "location": "",
+          "project": "mlab-collaboration",
+          "rawQuery": true,
+          "rawSql": "SELECT ISPname\n\nFROM `${dataset}.cached_metro_report` ('MinRTT', '.', 1)\nLIMIT 1",
+          "refId": "tempvar",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "2024-12-18T15:31:56.211Z",
+    "to": "2024-12-18T15:41:56.211Z"
+  },
+  "timepicker": {
+    "hidden": true
+  },
+  "timezone": "utc",
+  "title": "Global Metro Bar Chart",
+  "uid": "20250110a",
+  "version": 72,
+  "weekStart": ""
+}
