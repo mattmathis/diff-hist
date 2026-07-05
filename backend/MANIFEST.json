@@ -1,0 +1,314 @@
+{
+  "project": "mlab-collaboration",
+  "dataset": "mm_preproduction",
+  "entry_points": [
+    "access_ndt7_cached_histograms",
+    "access_exp_ndt7_isp_histograms",
+    "access_ndt7_isp_histograms",
+    "experimental_ndt7_isp_histograms",
+    "unified_ndt7_isp_histograms",
+    "regional_report",
+    "calibration_report",
+    "minRTT_competition_report",
+    "throughput_competition_report",
+    "global_fleet_inventory",
+    "cached_metro_report",
+    "cached_metadata",
+    "server_metadata"
+  ],
+  "objects": {
+    "access_exp_ndt7_isp_histograms": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/access_exp_ndt7_isp_histograms.sql",
+      "depends_on": [
+        "access_ndt7_cached_histograms",
+        "experimental_ndt7_isp_histograms"
+      ],
+      "deploy_rank": 18
+    },
+    "access_ndt7_cached_histograms": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/access_ndt7_cached_histograms.sql",
+      "depends_on": [],
+      "deploy_rank": 8
+    },
+    "access_ndt7_isp_histograms": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/access_ndt7_isp_histograms.sql",
+      "depends_on": [
+        "access_ndt7_cached_histograms",
+        "experimental_ndt7_isp_histograms"
+      ],
+      "deploy_rank": 19
+    },
+    "autoload_DS16": {
+      "type": "BASE TABLE",
+      "path": "tables/autoload_DS16.sql",
+      "depends_on": [],
+      "deploy_rank": 0
+    },
+    "cached_metadata": {
+      "type": "BASE TABLE",
+      "path": "tables/cached_metadata.sql",
+      "depends_on": [],
+      "deploy_rank": 1
+    },
+    "cached_metro_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/cached_metro_report.sql",
+      "depends_on": [
+        "access_ndt7_cached_histograms",
+        "access_ndt7_isp_histograms",
+        "metro_report"
+      ],
+      "deploy_rank": 20
+    },
+    "cached_ndt7_isp_histogram_download_LossRatio": {
+      "type": "BASE TABLE",
+      "path": "tables/cached_ndt7_isp_histogram_download_LossRatio.sql",
+      "depends_on": [],
+      "deploy_rank": 2
+    },
+    "cached_ndt7_isp_histogram_download_MinRTT": {
+      "type": "BASE TABLE",
+      "path": "tables/cached_ndt7_isp_histogram_download_MinRTT.sql",
+      "depends_on": [],
+      "deploy_rank": 3
+    },
+    "cached_ndt7_isp_histogram_download_MinRTT_linear": {
+      "type": "BASE TABLE",
+      "path": "tables/cached_ndt7_isp_histogram_download_MinRTT_linear.sql",
+      "depends_on": [],
+      "deploy_rank": 4
+    },
+    "cached_ndt7_isp_histogram_download_Throughput": {
+      "type": "BASE TABLE",
+      "path": "tables/cached_ndt7_isp_histogram_download_Throughput.sql",
+      "depends_on": [],
+      "deploy_rank": 5
+    },
+    "calibration_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/calibration_report.sql",
+      "depends_on": [
+        "access_ndt7_isp_histograms",
+        "cached_metadata"
+      ],
+      "deploy_rank": 21
+    },
+    "experimental_ndt7_isp_histograms": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/experimental_ndt7_isp_histograms.sql",
+      "depends_on": [
+        "extended_intermediate_downloads_DS16",
+        "extended_intermediate_downloads_DS1C",
+        "extended_intermediate_downloads_DS1V",
+        "extended_intermediate_uploads_DS16",
+        "extended_intermediate_uploads_DS1V",
+        "get_ndt7_data",
+        "unified_ndt7_isp_histograms"
+      ],
+      "deploy_rank": 22
+    },
+    "extended_intermediate_downloads_DS16": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/extended_intermediate_downloads_DS16.sql",
+      "depends_on": [
+        "autoload_DS16",
+        "extended_ndt7_downloads",
+        "ndt7_DS16"
+      ],
+      "deploy_rank": 10
+    },
+    "extended_intermediate_downloads_DS1C": {
+      "type": "BASE TABLE",
+      "path": "tables/extended_intermediate_downloads_DS1C.sql",
+      "depends_on": [],
+      "deploy_rank": 6
+    },
+    "extended_intermediate_downloads_DS1V": {
+      "type": "VIEW",
+      "path": "views/extended_intermediate_downloads_DS1V.sql",
+      "depends_on": [
+        "extended_intermediate_downloads_DS16",
+        "extended_ndt7_downloads"
+      ],
+      "deploy_rank": 11
+    },
+    "extended_intermediate_uploads_DS16": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/extended_intermediate_uploads_DS16.sql",
+      "depends_on": [
+        "autoload_DS16",
+        "extended_ndt7_uploads",
+        "ndt7_DS16"
+      ],
+      "deploy_rank": 13
+    },
+    "extended_intermediate_uploads_DS1V": {
+      "type": "VIEW",
+      "path": "views/extended_intermediate_uploads_DS1V.sql",
+      "depends_on": [
+        "extended_intermediate_uploads_DS16",
+        "extended_ndt7_uploads"
+      ],
+      "deploy_rank": 14
+    },
+    "extended_ndt7_downloads": {
+      "type": "VIEW",
+      "path": "views/extended_ndt7_downloads.sql",
+      "depends_on": [],
+      "deploy_rank": 9
+    },
+    "extended_ndt7_uploads": {
+      "type": "VIEW",
+      "path": "views/extended_ndt7_uploads.sql",
+      "depends_on": [],
+      "deploy_rank": 12
+    },
+    "get_ndt7_data": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/get_ndt7_data.sql",
+      "depends_on": [
+        "extended_ndt7_downloads"
+      ],
+      "deploy_rank": 15
+    },
+    "global_fleet_inventory": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/global_fleet_inventory.sql",
+      "depends_on": [
+        "autoload_DS16",
+        "cached_metadata",
+        "ndt7_DS16"
+      ],
+      "deploy_rank": 16
+    },
+    "metro_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/metro_report.sql",
+      "depends_on": [
+        "access_ndt7_cached_histograms",
+        "access_ndt7_isp_histograms",
+        "regional_report"
+      ],
+      "deploy_rank": 23
+    },
+    "minRTT_competition_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/minRTT_competition_report.sql",
+      "depends_on": [
+        "access_ndt7_isp_histograms",
+        "cached_metadata",
+        "calibration_report"
+      ],
+      "deploy_rank": 24
+    },
+    "ndt7_DS16": {
+      "type": "BASE TABLE",
+      "path": "tables/ndt7_DS16.sql",
+      "depends_on": [],
+      "deploy_rank": 7
+    },
+    "regional_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/regional_report.sql",
+      "depends_on": [
+        "access_ndt7_isp_histograms",
+        "timeseries_report"
+      ],
+      "deploy_rank": 25
+    },
+    "server_metadata": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/server_metadata.sql",
+      "depends_on": [
+        "autoload_DS16",
+        "cached_metadata",
+        "extended_ndt7_downloads",
+        "ndt7_DS16"
+      ],
+      "deploy_rank": 17
+    },
+    "throughput_competition_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/throughput_competition_report.sql",
+      "depends_on": [
+        "access_ndt7_isp_histograms",
+        "cached_metadata",
+        "calibration_report"
+      ],
+      "deploy_rank": 26
+    },
+    "timeseries_report": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/timeseries_report.sql",
+      "depends_on": [
+        "access_ndt7_isp_histograms",
+        "regional_report"
+      ],
+      "deploy_rank": 27
+    },
+    "unified_ndt7_isp_histograms": {
+      "type": "TABLE FUNCTION",
+      "path": "routines/unified_ndt7_isp_histograms.sql",
+      "depends_on": [
+        "experimental_ndt7_isp_histograms",
+        "extended_intermediate_downloads_DS16",
+        "extended_intermediate_downloads_DS1V",
+        "extended_intermediate_uploads_DS16",
+        "extended_intermediate_uploads_DS1V",
+        "get_ndt7_data"
+      ],
+      "deploy_rank": 28
+    }
+  },
+  "deploy_order": [
+    "autoload_DS16",
+    "cached_metadata",
+    "cached_ndt7_isp_histogram_download_LossRatio",
+    "cached_ndt7_isp_histogram_download_MinRTT",
+    "cached_ndt7_isp_histogram_download_MinRTT_linear",
+    "cached_ndt7_isp_histogram_download_Throughput",
+    "extended_intermediate_downloads_DS1C",
+    "ndt7_DS16",
+    "access_ndt7_cached_histograms",
+    "extended_ndt7_downloads",
+    "extended_intermediate_downloads_DS16",
+    "extended_intermediate_downloads_DS1V",
+    "extended_ndt7_uploads",
+    "extended_intermediate_uploads_DS16",
+    "extended_intermediate_uploads_DS1V",
+    "get_ndt7_data",
+    "global_fleet_inventory",
+    "server_metadata",
+    "access_exp_ndt7_isp_histograms",
+    "access_ndt7_isp_histograms",
+    "cached_metro_report",
+    "calibration_report",
+    "experimental_ndt7_isp_histograms",
+    "metro_report",
+    "minRTT_competition_report",
+    "regional_report",
+    "throughput_competition_report",
+    "timeseries_report",
+    "unified_ndt7_isp_histograms"
+  ],
+  "scheduled_queries": {
+    "cached_ndt7_isp_histograms": {
+      "display_name": "Create cached_ndt7_isp_histograms",
+      "transfer_config": "projects/1031725934094/locations/us/transferConfigs/69f6a19f-0000-2d38-b20a-d4f547f5814c",
+      "schedule": "every sun 23:00",
+      "path": "scheduled/cached_ndt7_isp_histograms.sql",
+      "depends_on": [
+        "cached_metadata",
+        "cached_ndt7_isp_histogram_download_LossRatio",
+        "cached_ndt7_isp_histogram_download_MinRTT",
+        "cached_ndt7_isp_histogram_download_MinRTT_linear",
+        "cached_ndt7_isp_histogram_download_Throughput",
+        "server_metadata",
+        "unified_ndt7_isp_histograms"
+      ]
+    }
+  }
+}

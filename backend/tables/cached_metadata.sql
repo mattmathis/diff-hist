@@ -1,0 +1,27 @@
+CREATE TABLE `mlab-collaboration.mm_preproduction.cached_metadata`
+(
+  tag STRING,
+  Server STRING,
+  site STRING,
+  ContinentCode STRING,
+  CountryCode STRING,
+  City STRING,
+  Latitude FLOAT64,
+  Longitude FLOAT64,
+  ASNumber INT64,
+  ASName STRING,
+  managed STRING,
+  deployment STRING,
+  Org STRING,
+  type STRING,
+  machineType STRING,
+  zone STRING,
+  loadBalanced STRING,
+  networkTier STRING,
+  externalIP STRING,
+  externalIPv6 STRING,
+  manual STRING,
+  FirstDate DATE,
+  LastDate DATE,
+  MissingDays INT64
+);

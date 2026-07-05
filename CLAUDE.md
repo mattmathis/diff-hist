@@ -12,6 +12,16 @@ notebooks, with a "webapp" mode that accepts dropdown presets from URL parameter
 > dataset, documented under `docs/functions/`. The `bq` CLI is authenticated as
 > `mattmathis@measurementlab.net` (project `mlab-collaboration`).
 
+> **BQ backend source (`backend/`):** the deployable SQL for that fleet
+> (routines/views/tables + the weekly cache-builder scheduled query) is extracted
+> verbatim into `backend/` so **git is the source of truth**, following the
+> `bq-tools` skill method. `tools/extract_backend.py` pulls the authoritative
+> `CREATE …` text from `INFORMATION_SCHEMA.…ddl` and walks the dependency closure
+> from the notebook-facing routines plus the tracked scheduled queries (29
+> objects + 1 scheduled query). See `backend/README.md`. (`bq` must be
+> authenticated where the tool runs; the annealing SA is the reliable path since
+> the local user token lapses under the Workspace reauth policy.)
+
 ## Stack
 
 | Purpose | Library |
@@ -56,7 +66,15 @@ project/
 │   ├── convert.py          # Driver: parse dashboard → write notebooks.stage/
 │   │                       #   auto-detects flavor; calls gen_deps.gen_all()
 │   ├── gen_deps.py         # Generate docs/dependencies.md (BQ↔notebook map)
-│   └── gen_docs.py         # Fetch BQ routine/table definitions → docs/functions/*.md
+│   ├── gen_docs.py         # Fetch BQ routine/table definitions → docs/functions/*.md
+│   └── extract_backend.py  # Extract the BQ fleet (closure from notebook entry
+│                           #   points + scheduled queries) → backend/*.sql via
+│                           #   INFORMATION_SCHEMA.ddl; round-trip deterministic
+├── backend/                # Deployable SQL source of the BQ fleet (git = truth)
+│   ├── routines/           # TABLE FUNCTIONs (histogram + report logic)
+│   ├── views/ · tables/    # views; table schema DDL (data lives in BQ)
+│   ├── scheduled/          # transfer-config SQL (weekly cache builder) + schedule
+│   └── MANIFEST.json       # types, dependency edges, deploy order, scheduled qs
 ├── dashboards/             # Input: Grafana dashboard JSON files
 │   └── internal/           # Internal-only dashboards (competition reports)
 ├── docs/
