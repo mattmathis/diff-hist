@@ -104,16 +104,29 @@ def _referenced_vars(sql: str, names: set[str]) -> set[str]:
 
 
 class Controls:
-    def __init__(self, variables: list[dict], client, *, presets: dict | None = None):
+    def __init__(self, variables: list[dict], client, *, presets: dict | None = None,
+                 asn_presets: dict | None = None, after: dict | None = None):
         """``variables`` is a list of serialized variable dicts as produced by
         :func:`converter.notebook_builder.serialize_variables`.
         Also accepts a ``Dashboard`` object for use outside the notebook context.
+
+        ``asn_presets`` maps variable names to lists of AS number strings.  After
+        a chained query populates that variable's options, any option whose value
+        starts with a matching AS number is pre-selected (overrides default_select).
+        Format: ``{'ClientISP': ['7922', '8030']}``
+
+        ``after`` maps a variable name to an extra widget to splice into the
+        layout immediately after that variable's row (e.g. a date-picker row
+        placed right after the ``method`` selector).  Ignored if the named
+        variable has no widget (hidden/constant).  Format: ``{'method': w}``
         """
         if hasattr(variables, "variables"):
             variables = [_v_to_dict(v) for v in variables.variables]
         self._variables: list[dict] = variables
         self.client = client
         self.presets = presets or {}
+        self.asn_presets = asn_presets or {}
+        self.after = after or {}
         self.defaults = qb.default_values(variables)
         self.widgets: dict[str, widgets.Widget] = {}
         self._fixed: dict[str, object] = {}  # hidden/constant values, no widget
@@ -223,6 +236,15 @@ class Controls:
             prev = w.value
             w.options = opts
             values = [val for _, val in opts]
+            # ASN preset: select options whose AS number (first space-delimited
+            # token) matches a requested AS number.  Takes priority over
+            # default_select and anchor-change retention.
+            if name in self.asn_presets:
+                _asns = set(str(a) for a in self.asn_presets[name])
+                _matches = [val for val in values if val.split(" ")[0] in _asns]
+                if _matches:
+                    _set_value(w, _matches, valid=values)
+                    return
             if set_default:
                 ds = v.get("default_select")
                 if ds == "all":
@@ -252,6 +274,8 @@ class Controls:
         rows = [widgets.HTML("<b>Dashboard controls</b>")]
         for name, w in self.widgets.items():
             rows.append(getattr(w, "widget", w))
+            if name in self.after:
+                rows.append(self.after[name])
         return widgets.VBox(rows)
 
 

@@ -378,6 +378,32 @@ _EMPTY_HIST = pd.DataFrame(
     columns=['bin', 'pdf', 'cdf', 'siteName', 'ISPname', 'n_tests'])
 
 
+# Module-level cache of raw histogram query results, keyed by SQL text.
+# Persists for the life of the kernel so re-renders (changing the ISP
+# selection, re-clicking Run) reuse a query instead of re-hitting BQ. The
+# field/metric is part of the SQL, so each metric is cached separately.
+_HIST_CACHE: dict[str, pd.DataFrame] = {}
+
+
+def clear_hist_cache() -> None:
+    """Drop all cached histogram query results."""
+    _HIST_CACHE.clear()
+
+
+def _cached_query(client, sql: str, cache=None) -> pd.DataFrame:
+    """Run ``sql`` once and memoise the raw result by SQL text.
+
+    ``cache`` defaults to the module-level :data:`_HIST_CACHE`; pass an explicit
+    dict to scope caching differently (e.g. per-render).  Returns a defensive
+    copy so callers may mutate the result without corrupting the cached frame.
+    """
+    if cache is None:
+        cache = _HIST_CACHE
+    if sql not in cache:
+        cache[sql] = run_query(client, sql)
+    return cache[sql].copy()
+
+
 def fetch_histograms(
     client,
     method: str,
@@ -390,43 +416,50 @@ def fetch_histograms(
     to_dt=None,
     isp_regex: str | None = None,
     dataset: str = "mlab-collaboration.mm_preproduction",
+    cache=None,
 ) -> pd.DataFrame:
     """Fetch, densify, and return PDF + CDF for one metric across all matching ISPs.
 
-    Dispatches on ``method``:
+    Dispatches on the **backend token** — the first ``-``-delimited segment of
+    ``method`` (``cached`` / ``live`` / ``exp``).  Any trailing modifiers
+    (``DS16``, ``DS1C``, ``DS1V``, ``showLocate``, …) are passed through in the
+    full ``method`` string but do **not** select the backend, so e.g.
+    ``live-DS16`` runs against the live (unified) backend:
 
-    * ``'%cached%'``          → ``access_ndt7_cached_histograms(field, site_regex, isp_count)``
+    * ``cached``           → ``access_ndt7_cached_histograms(field, site_regex, isp_count)``
       (pre-densified in BQ; 3 args; no dates)
-    * ``'%exp%'`` / ``'%DS%'`` → ``experimental_ndt7_isp_histograms(...)``
+    * ``exp``              → ``experimental_ndt7_isp_histograms(...)``
       (sparse; densified in Python)
-    * anything else (live)    → ``unified_ndt7_isp_histograms(...)``
+    * anything else (live) → ``unified_ndt7_isp_histograms(...)``
       (sparse; densified in Python)
 
-    BQ errors propagate unchanged so they surface in the notebook output.
+    Raw query results are memoised (see :func:`_cached_query`); ``cache``
+    overrides the module-level store.  BQ errors propagate unchanged so they
+    surface in the notebook output.
 
     Returns a DataFrame with columns ``bin``, ``pdf``, ``cdf``, ``siteName``,
     ``ISPname``, ``n_tests``.
     """
-    ml = method.lower()
+    backend = method.split('-', 1)[0].strip().lower()
 
-    if 'cached' in ml:
+    if backend == 'cached':
         sql = (f'SELECT * FROM `{dataset}.access_ndt7_cached_histograms`'
                f'("{field}", "{site_regex}", {isp_count})')
         needs_densification = False
-    elif any(k in method for k in ('exp', 'DS16', 'DS1C', 'DS1V')):
+    elif backend == 'exp':
         start, end = _date_str(from_dt), _date_str(to_dt)
         sql = (f'SELECT * FROM `{dataset}.experimental_ndt7_isp_histograms`'
                f'("{method}", "{x_axis}", {bin_size}, "{field}", '
                f'DATE "{start}", DATE "{end}", "{site_regex}")')
         needs_densification = True
-    else:
+    else:  # 'live' — and any unrecognised token — use the unified backend
         start, end = _date_str(from_dt), _date_str(to_dt)
         sql = (f'SELECT * FROM `{dataset}.unified_ndt7_isp_histograms`'
                f'("{method}", "{x_axis}", {bin_size}, "{field}", '
                f'DATE "{start}", DATE "{end}", "{site_regex}")')
         needs_densification = True
 
-    df = run_query(client, sql)
+    df = _cached_query(client, sql, cache)
     if df.empty:
         return _EMPTY_HIST.copy()
 
@@ -458,10 +491,29 @@ def fetch_histograms(
     return df.drop(columns=['binIX'], errors='ignore')
 
 
+def to_html_sticky(df: pd.DataFrame, **kwargs) -> str:
+    """``df.to_html`` with column headers frozen (sticky) during vertical scroll.
+
+    Adds inline ``position: sticky`` styling to each header cell so the labels
+    stay pinned while the table body scrolls inside its overflow container.
+    Uses inline ``style`` attributes (not a ``<style>`` block) so it survives
+    Voilà's DOMPurify sanitisation.  The caller must still wrap the result in a
+    scrolling container, e.g. ``<div style="height:500px;overflow:auto">``.
+    Extra kwargs pass straight through to ``pandas.DataFrame.to_html`` (e.g.
+    ``index=False``, ``na_rep``, ``escape``).
+    """
+    html = df.to_html(**kwargs)
+    th_style = ("position:sticky;top:0;z-index:2;"
+                "background:var(--jp-layout-color0,#fff);"
+                "box-shadow:inset 0 -1px 0 rgba(128,128,128,.4)")
+    return html.replace("<th>", f'<th style="{th_style}">')
+
+
 def plotly_combined_figure(
     df: pd.DataFrame,
     layout: dict | None = None,
     title: str = "",
+    sites: list | None = None,
 ) -> go.Figure:
     """Build a combined PDF + CDF figure with two vertically offset Y axes.
 
@@ -471,28 +523,42 @@ def plotly_combined_figure(
     bottom 42 % of the plot area, the CDF sub-axis in the top 42 %.  A 16 %
     gap between them prevents overlap.  The legend is keyed to the site names
     and shared between both sub-axes (each site appears once).
+
+    ``sites`` is the full set of servers to force into the legend.  Any server
+    in ``sites`` with no rows in ``df`` (zero data points for this ISP) still
+    gets a legend entry — an empty trace labelled ``"(0)"`` — so every selected
+    server is always shown.  Passing the full server set also keeps the colour
+    assignment stable across the per-ISP charts (colours index into the sorted
+    union, which is identical for every ISP).
     """
     fig = go.Figure()
-    if df is not None and not df.empty and 'pdf' in df.columns:
-        sites = sorted(df['siteName'].dropna().unique(), key=str)
+    _has = df is not None and not df.empty and 'pdf' in df.columns
+    _data_sites = sorted(df['siteName'].dropna().unique(), key=str) if _has else []
+    if sites:
+        all_sites = sorted({str(s) for s in sites} | set(_data_sites), key=str)
+    else:
+        all_sites = _data_sites
 
-        # Precompute labels (needs n_tests before either trace loop).
+    if all_sites:
+        # Precompute labels/subframes (needs n_tests before either trace loop).
+        # A server absent from df gets sub=None → empty trace, "(0)" count.
         labels = {}
         subs   = {}
-        for site in sites:
-            sub = df[df['siteName'] == site]
-            n   = (int(sub['n_tests'].iloc[0])
-                   if 'n_tests' in sub.columns and len(sub) > 0 else None)
-            _base = f"{site} ({n:,})" if n is not None else str(site)
-            labels[site] = f"<b>{_base}</b>"
-            subs[site]   = sub
+        for site in all_sites:
+            sub = df[df['siteName'] == site] if _has else None
+            _rows = sub is not None and len(sub) > 0
+            n = int(sub['n_tests'].iloc[0]) if _rows and 'n_tests' in sub.columns else 0
+            labels[site] = f"<b>{site} ({n:,})</b>"
+            subs[site]   = sub if _rows else None
 
         # Add CDF traces first so Plotly assigns them colours 0, 1, 2 … from
         # the active template's colorway.
-        for site in sites:
+        for site in all_sites:
+            _s = subs[site]
             fig.add_trace(go.Scatter(
-                x=subs[site]['bin'], y=subs[site]['cdf'], name=labels[site],
-                mode='lines', line=dict(width=2),
+                x=(_s['bin'] if _s is not None else []),
+                y=(_s['cdf'] if _s is not None else []),
+                name=labels[site], mode='lines', line=dict(width=2),
                 yaxis='y2', legendgroup=labels[site], showlegend=False,
             ))
 
@@ -505,11 +571,13 @@ def plotly_combined_figure(
         )
 
         # Add PDF traces with colours that match their CDF counterparts.
-        for i, site in enumerate(sites):
+        for i, site in enumerate(all_sites):
             color = _colorway[i % len(_colorway)]
+            _s = subs[site]
             fig.add_trace(go.Scatter(
-                x=subs[site]['bin'], y=subs[site]['pdf'], name=labels[site],
-                mode='lines', line=dict(width=2, color=color),
+                x=(_s['bin'] if _s is not None else []),
+                y=(_s['pdf'] if _s is not None else []),
+                name=labels[site], mode='lines', line=dict(width=2, color=color),
                 yaxis='y', legendgroup=labels[site], showlegend=True,
             ))
 
@@ -799,6 +867,54 @@ def metro_nav_html(
     )
 
 
+def regional_details_url(
+    anchor: str,
+    sites: list[str] | None = None,
+    isp_values: list[str] | None = None,
+    target: str = "regional_details_dashboard",
+) -> str:
+    """Build a Voilà-relative URL for the Regional Details notebook.
+
+    *isp_values* is a list of ``"{ASnumber} {ISPname}"`` strings as returned
+    by BQ.  Only the AS number is included in the href; the name is for display
+    only (see :func:`isp_link_text`).
+    """
+    params = [f"anchor={anchor}"]
+    if sites:
+        params.append("sites=" + ",".join(sites))
+    if isp_values:
+        asns = [v.split(" ")[0] for v in isp_values]
+        params.append("ISPs=" + ",".join(asns))
+    return f"/voila/render/{target}.ipynb?" + "&".join(params)
+
+
+def isp_link_text(isp_values: list[str]) -> str:
+    """Return ISP display names (everything after the AS number) for anchor text."""
+    return ", ".join(" ".join(v.split(" ")[1:]) for v in isp_values)
+
+
+def breadcrumb_to_url(
+    breadcrumb: str,
+    target: str = "regional_details_dashboard",
+) -> str:
+    """Parse a breadcrumb string and return a Voilà-relative URL for Regional Details.
+
+    Breadcrumb format (space-delimited): ``site1 site2 ASnumber [ISPname]``
+    Only the AS number is included in the URL; the ISPname is for display only.
+    Returns an empty string if the breadcrumb is empty or malformed.
+    """
+    if not breadcrumb or not str(breadcrumb).strip():
+        return ""
+    parts = str(breadcrumb).strip().split(" ", 3)
+    if len(parts) < 3:
+        return ""
+    sites  = [parts[0], parts[1]]
+    asn    = parts[2]
+    anchor = parts[0][:3]
+    return regional_details_url(anchor, sites=sites, isp_values=[asn],
+                                target=target)
+
+
 def run_competition_report(
     client,
     report_type: str = "minRTT",
@@ -813,8 +929,8 @@ def run_competition_report(
     """Run ``minRTT_competition_report`` or ``throughput_competition_report``.
 
     ``report_type`` selects the BQ function (``'minRTT'`` or ``'throughput'``).
-    ``BCargs`` and ``Breadcrumb`` columns are stripped — breadcrumb navigation
-    is deferred to a later pass.
+    The Breadcrumb column is retained; the render template parses its
+    space-delimited contents into a navigation link.
     """
     start = _date_str(from_dt)
     end   = _date_str(to_dt)
@@ -823,8 +939,7 @@ def run_competition_report(
         f'SELECT * FROM `{dataset}.{fn}`'
         f'("{method}", "{start}", "{end}", "{org}", {radius}, {isp_count})'
     )
-    df = run_query(client, sql)
-    return df.drop(columns=["BCargs", "Breadcrumb"], errors="ignore")
+    return run_query(client, sql)
 
 
 def run_calibration_report(

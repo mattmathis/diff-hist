@@ -31,9 +31,9 @@ OUTPUT         = Path("docs/dependencies.md")
 # BQ resources called by runtime.fetch_histograms at runtime (not in SQL).
 # Update this table whenever the dispatch logic in runtime.py changes.
 _FETCH_HISTOGRAMS_DISPATCH = [
-    ("access_ndt7_cached_histograms",        "cached",              "method contains 'cached'"),
-    ("experimental_ndt7_isp_histograms",     "exp / DS16 / DS1C",   "method contains 'exp' or 'DS'"),
-    ("unified_ndt7_isp_histograms",          "live (no backend yet)", "all other methods"),
+    ("access_ndt7_cached_histograms",        "cached",              "backend token == 'cached'"),
+    ("experimental_ndt7_isp_histograms",     "exp",                 "backend token == 'exp'"),
+    ("unified_ndt7_isp_histograms",          "live",                "any other backend token (e.g. live, live-DS16)"),
 ]
 
 # Flavors that route histogram data through fetch_histograms.
@@ -46,7 +46,7 @@ _ROLE_HINTS: dict[str, str] = {
     "access_ndt7_isp_histograms":    "histogram wrapper — bypassed at runtime by fetch_histograms",
     "access_exp_ndt7_isp_histograms":"histogram wrapper — bypassed at runtime by fetch_histograms",
     "experimental_ndt7_isp_histograms": "live experimental histogram data (PDF/CDF plots)",
-    "unified_ndt7_isp_histograms":   "live unified histogram data (PDF/CDF plots, no backend yet)",
+    "unified_ndt7_isp_histograms":   "live unified histogram data (PDF/CDF plots)",
     "cached_metadata":               "server/site geo metadata (anchor & server dropdowns)",
     "global_fleet_inventory":        "fleet egress inventory (table + map)",
     "cached_metro_report":           "metro-level KS distance and spread (bar charts + dropdown)",
@@ -147,7 +147,24 @@ def gen_all(dashboards_dir: Path = DASHBOARDS_DIR,
             f"| {r['access']} | {r['role']} |"
         )
 
-    lines += ["", "## Per-notebook detail", ""]
+    # Build inverted index: resource → [(notebook, access, role), ...]
+    per_res: dict[str, list[dict]] = {}
+    for r in rows:
+        per_res.setdefault(r['resource'], []).append(r)
+
+    lines += ["", "## Per-resource detail", ""]
+    for res_name, usages in sorted(per_res.items()):
+        lines += [
+            f"### `{res_name}`",
+            "",
+            "| Notebook | Access | Role |",
+            "|---|---|---|",
+        ]
+        for u in usages:
+            lines.append(f"| `{u['notebook']}` | {u['access']} | {u['role']} |")
+        lines.append("")
+
+    lines += ["## Per-notebook detail", ""]
     for slug, nb in per_nb.items():
         lines += [
             f"### `{slug}` ({nb['flavor']})",

@@ -187,26 +187,68 @@ _FLEET_BEFORE_TABLE = """\
 
 _EXP_METHOD_PREAMBLE = """\
     # Build composite BQ method string from sub-selector widgets.
+    #   cached      -> "cached"
+    #   live        -> "live" (exp-only modifiers are NOT applied, so switching
+    #                  exp->live cannot pollute live with hidden selector values)
+    #   exp backend -> exp-<locate>-<sub_method>[-<extra_flags>]
     _ms    = ctx.get("methodsrc", "cached")
     _loc   = ctx.get("locate", "showLocate")
     _sub   = ctx.get("sub_method", "default")
     _extra = (ctx.get("extra_flags") or "").strip()
     if _sub == "showName=":
         _sub = f"showName={ctx.get('clientname', '')}"
-    if _ms != "cached":
+    _backend = _ms.split("-")[0]
+    if _ms == "cached":
+        ctx["method"] = "cached"
+    elif _backend == "exp":
         _parts = [_ms, _loc, _sub]
         if _extra:
             _parts.append(_extra)
         ctx["method"] = "-".join(p for p in _parts if p and p != "default")
     else:
-        ctx["method"] = "cached"
+        ctx["method"] = _ms   # live (or any non-exp backend): pass through unpolluted
 """
+
+
+# "Extra rows" selector: padded onto the BQ row count (ISPcount) when the
+# selected servers span multiple metros, so the query returns enough ranked
+# ISPs to cover every metro.  Shown/hidden dynamically (see _CONTROLS) and used
+# only for the BQ isp_count — never for the ClientISP dropdown or display.
+def _extra_rows_var() -> dict:
+    return {
+        "name": "extra_rows", "type": "textbox", "label": "Extra rows",
+        "description": ("Added to Client Rows when fetching from BQ; shown only "
+                        "when the selected servers span multiple metros."),
+        "hide": 0, "multi": False, "options": [], "current": {"value": "0"},
+        "query_sql": None,
+    }
+
+
+def _insert_after(out: list[dict], after_name: str, var: dict) -> None:
+    """Insert ``var`` immediately after the ``after_name`` variable (or append)."""
+    idx = next((i for i, v in enumerate(out) if v['name'] == after_name), None)
+    out.insert(idx + 1 if idx is not None else len(out), var)
+
+
+# Organization selector shared by the internal competition reports and the
+# calibration report (a stub until the org-filter backend work lands).
+def _org_var() -> dict:
+    return {
+        'name': 'organization', 'type': 'query',
+        'label': 'Organization', 'description': 'M-Lab hosting organization.',
+        'hide': 0, 'multi': False,
+        'options': [{'text': 'All orgs', 'value': '.*'}],
+        'current': {'value': '.*'},
+        'query_sql': _ORG_QUERY,
+    }
 
 
 def _filter_for_cached(variables: list[dict]) -> list[dict]:
     """Prune dropdown options that are unsupported when method=cached.
 
-    * ``method`` — keep only ``cached`` (live/experimental have no backend).
+    * ``method`` — offer ``cached`` / ``live`` / ``live-DS16`` (default cached).
+      The backend token routes histogram fetches; ``live-DS16`` is live data
+      with the DS16 modifier applied.
     * ``table_field`` — keep only the four fields the cache partitions on;
       others silently fall back to MinRTT.
     * ``field`` (Fourth column, panel 133) — keep only cache-compatible values.
@@ -218,12 +260,16 @@ def _filter_for_cached(variables: list[dict]) -> list[dict]:
         if name == 'mode':
             continue  # PDF and CDF are always shown together; selector removed
         elif name == 'method':
-            v['options'] = [o for o in v['options'] if o['value'] == 'cached']
+            v['options'] = [
+                {'text': 'cached',    'value': 'cached'},
+                {'text': 'live',      'value': 'live'},
+                {'text': 'live-DS16', 'value': 'live-DS16'},
+            ]
             v['current'] = {'value': 'cached'}
         elif name == 'region':
             v['default_select'] = 'all'   # select all servers by default
         elif name == 'ClientISP':
-            v['default_select'] = 'half'  # select first half of ranked ISPs
+            v['default_select'] = 'all'   # select all ranked ISPs by default
         elif name == 'table_field':
             v['options'] = [o for o in v['options']
                             if o['value'] in _CACHED_TABLE_FIELDS]
@@ -252,6 +298,7 @@ def _filter_for_cached(variables: list[dict]) -> list[dict]:
     if _ts is not None and _tf is not None and _ts > _tf:
         out[_ts], out[_tf] = out[_tf], out[_ts]
 
+    _insert_after(out, 'ISPcount', _extra_rows_var())
     return out
 
 
@@ -291,7 +338,7 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
         elif name == 'region':
             v['default_select'] = 'all'
         elif name == 'ClientISP':
-            v['default_select'] = 'half'
+            v['default_select'] = 'all'
         out.append(v)
 
     # table_style before table_field (same ordering as prod).
@@ -299,6 +346,8 @@ def _filter_for_exp(variables: list[dict]) -> list[dict]:
     _tf = next((i for i, v in enumerate(out) if v['name'] == 'table_field'), None)
     if _ts is not None and _tf is not None and _ts > _tf:
         out[_ts], out[_tf] = out[_tf], out[_ts]
+
+    _insert_after(out, 'ISPcount', _extra_rows_var())
 
     # Sub-method and extra_flags at the top, before anchor.
     out.insert(0, {
@@ -359,14 +408,18 @@ def _filter_for_calibration(variables: list[dict]) -> list[dict]:
 
     Drops infrastructure variables (datasource, dataset, detailURL) and
     parameters locked as Python constants (method, xAxis, binSize).
-    Keeps the visible selectors: field, region, radius, ISPcount.
+    Keeps the visible selectors: field, radius, ISPcount, and — like the
+    internal competition reports — a BQ-backed ``organization`` selector
+    (``_ORG_QUERY``, default '.*' = all orgs) in place of the ``region`` stub.
+    The org filter is a placeholder until the org-filter backend work lands.
 
-    ${dataset} is pre-substituted in any query_sql (e.g. the region dropdown
-    query) since the dataset variable itself is dropped.
+    ${dataset} is pre-substituted in any remaining query_sql since the
+    dataset variable itself is dropped.
     """
     _DATASET = "mlab-collaboration.mm_preproduction"
-    drop = {'datasource', 'dataset', 'detailURL', 'xAxis', 'binSize'}
+    drop = {'datasource', 'dataset', 'detailURL', 'xAxis', 'binSize', 'region'}
     out = []
+    org_present = False
     for v in variables:
         v = dict(v)
         name = v['name']
@@ -379,11 +432,14 @@ def _filter_for_calibration(variables: list[dict]) -> list[dict]:
                             if o['value'] in ('cached', 'live')]
             v['current'] = {'value': 'cached'}
             v['hide'] = 0
-        elif name == 'region':
-            v['default_select'] = 'all'
+        elif name == 'organization':
+            v.update(_org_var())   # normalise to the shared stubbed org selector
+            org_present = True
         elif name == 'radius':
             v['current'] = {'value': '100'}
         out.append(v)
+    if not org_present:
+        out.insert(0, _org_var())
     return out
 
 
@@ -417,12 +473,7 @@ def _filter_for_internal(variables: list[dict]) -> list[dict]:
         if name in drop:
             continue
         if name == 'organization':
-            v['type'] = 'query'
-            v['query_sql'] = _ORG_QUERY
-            v['options'] = [{'text': 'All orgs', 'value': '.*'}]
-            v['current'] = {'value': '.*'}
-            v['multi'] = False
-            v['hide'] = 0
+            v.update(_org_var())   # shared stubbed org selector (see _org_var)
             org_inserted = True
         elif name == 'method':
             v['options'] = [o for o in v['options']
@@ -431,14 +482,7 @@ def _filter_for_internal(variables: list[dict]) -> list[dict]:
             v['hide'] = 0
         out.append(v)
     if not org_inserted:
-        out.insert(0, {
-            'name': 'organization', 'type': 'query',
-            'label': 'Organization', 'description': 'M-Lab hosting organization.',
-            'hide': 0, 'multi': False,
-            'options': [{'text': 'All orgs', 'value': '.*'}],
-            'current': {'value': '.*'},
-            'query_sql': _ORG_QUERY,
-        })
+        out.insert(0, _org_var())
     if not any(v['name'] == 'method' for v in out):
         out.insert(0, {
             'name': 'method', 'type': 'custom',
@@ -614,6 +658,17 @@ except Exception:
 _env = os.environ.get("DASH_PRESETS")
 if _env:
     url_params.update(json.loads(_env))
+
+# sites= and ISPs= param handling.
+# sites= pre-selects servers by site code (e.g. sites=lga04,lga05).
+# ISPs= pre-selects ISPs by AS number (e.g. ISPs=7922,8030).
+# If sites= is present but anchor= is not, derive anchor from first site code.
+_sites_param = [s.strip() for s in url_params.get('sites', '').split(',') if s.strip()]
+_isp_asns    = [s.strip() for s in url_params.get('ISPs',  '').split(',') if s.strip()]
+if _sites_param and 'anchor' not in url_params:
+    url_params['anchor'] = _sites_param[0][:3]
+if _sites_param:
+    url_params['region'] = _sites_param
 '''
 
 # Date-picker blocks — three variants:
@@ -646,7 +701,7 @@ _end_date   = _today_utc - timedelta(days=_days_back)
 w_to       = widgets.DatePicker(value=_end_date, description='End (UTC)',
                                 style={"description_width": "90px"})
 w_duration = widgets.Dropdown(
-    options=[("1 day", 1), ("7 days", 7), ("30 days", 30)],
+    options=[("1 day", 1), ("7 days", 7), ("28 days", 28), ("30 days", 30)],
     value=7, description='Duration',
     style={"description_width": "90px"},
 )
@@ -657,9 +712,46 @@ _DATE_PICKERS_NONE = "\nw_from = w_to = w_duration = None\n"
 
 _CONTROLS = '''\
 # --- Dashboard controls (dropdowns; query-backed ones are chained) ---
-ctrl = Controls(VARIABLES, client, presets=url_params)
+{date_pickers}
+# Date row: start/end range (exp) or end + duration (otherwise). Empty when the
+# flavor has no date pickers.
+if w_from is not None:
+    _date_row = widgets.HBox([w_from, w_to], layout=widgets.Layout(margin='2px 0'))
+elif w_to is not None and w_duration is not None:
+    _date_row = widgets.HBox([w_to, w_duration], layout=widgets.Layout(margin='2px 0'))
+else:
+    _date_row = widgets.HTML('')
+
+# The method (or methodsrc, in exp) selector drives date-picker visibility; the
+# date row is spliced into the controls column right after it.
+_method_var = 'methodsrc' if 'methodsrc' in [v['name'] for v in VARIABLES] else 'method'
+ctrl = Controls(VARIABLES, client, presets=url_params,
+                asn_presets={{'ClientISP': _isp_asns}} if _isp_asns else None,
+                after={{_method_var: _date_row}})
 w_run = widgets.Button(description="Run / Refresh", button_style="primary", icon="play")
-{date_pickers}_date_label = widgets.HTML('')   # filled from query results after Run
+_date_label = widgets.HTML('')   # filled from query results after Run
+
+# Hide the date row when the backend token is 'cached'; show it otherwise.
+_method_w = ctrl.widgets.get(_method_var)
+def _toggle_date_row(*_):
+    _is_cached = str(getattr(_method_w, 'value', '')).split('-')[0] == 'cached'
+    _date_row.layout.display = 'none' if _is_cached else ''
+if _method_w is not None:
+    _method_w.observe(_toggle_date_row, names='value')
+_toggle_date_row()
+
+# "Extra rows" (if present) is shown only when the selected servers span more
+# than one metro (distinct 3-letter IATA prefixes of the site codes).
+_extra_w   = ctrl.widgets.get('extra_rows')
+_servers_w = ctrl.widgets.get('region')
+def _toggle_extra_rows(*_):
+    _sel = _servers_w.value if _servers_w is not None else ()
+    _metros = {{str(s)[:3] for s in _sel}}
+    _row = getattr(_extra_w, 'widget', _extra_w)
+    _row.layout.display = '' if len(_metros) > 1 else 'none'
+if _extra_w is not None and _servers_w is not None:
+    _servers_w.observe(_toggle_extra_rows, names='value')
+    _toggle_extra_rows()
 '''
 
 _RENDER = '''\
@@ -679,10 +771,13 @@ def _diagnostics(ctx):
 
 def render(_=None):
     ctx = ctrl.context()
-{method_preamble}    to_dt   = (datetime.combine(w_to.value,   time(), tzinfo=timezone.utc)
-               if w_to   and w_to.value   else datetime.now(timezone.utc))
-    from_dt = (datetime.combine(w_from.value, time(), tzinfo=timezone.utc)
-               if w_from and w_from.value else to_dt - timedelta(days=7))
+{method_preamble}    to_dt   = (datetime.combine(w_to.value, time(), tzinfo=timezone.utc)
+               if w_to and w_to.value else datetime.now(timezone.utc))
+    if w_from is not None:
+        from_dt = (datetime.combine(w_from.value, time(), tzinfo=timezone.utc)
+                   if w_from.value else to_dt - timedelta(days=7))
+    else:
+        from_dt = to_dt - timedelta(days=(w_duration.value if w_duration else 7))
     cache = {{}}
 
     def query(sql):
@@ -725,7 +820,7 @@ def render(_=None):
                     else:
 {before_table}                        display(HTML(
                             '<div style="height:500px;overflow:auto">'
-                            + _df.to_html(index=False, na_rep="")
+                            + rt.to_html_sticky(_df, index=False, na_rep="")
                             + '</div>'
                         ))
 
@@ -741,6 +836,14 @@ def render(_=None):
         bulk_by_metric = {{}}
         _site_regex = qb.format_regex(ctx.get("region") or [])
         _isp_regex  = rt.asn_regex(repeats)
+        # "Extra rows" pads the BQ row count only when the selected servers span
+        # more than one metro; it is not used for the ISP selection or display.
+        _servers = ctx.get("region") or []
+        if isinstance(_servers, str):
+            _servers = [_servers]
+        _metros = {{s[:3] for s in _servers}}
+        _extra_rows = int(ctx.get("extra_rows") or 0) if len(_metros) > 1 else 0
+        _isp_count = int(ctx.get("ISPcount", 10)) + _extra_rows
         for metric in selected_metrics:
             try:
                 bulk_by_metric[metric] = rt.fetch_histograms(
@@ -748,7 +851,7 @@ def render(_=None):
                     method=ctx.get("method", "cached"),
                     field=metric,
                     site_regex=_site_regex,
-                    isp_count=int(ctx.get("ISPcount", 10)),
+                    isp_count=_isp_count,
                     bin_size=int(ctx.get("binSize", 50)),
                     x_axis=ctx.get("xAxis", "none"),
                     from_dt=from_dt,
@@ -782,7 +885,8 @@ def render(_=None):
                 df = df_all[df_all["ISPname"].str.startswith(asn + " ")]
                 try:
                     fig = rt.plotly_combined_figure(
-                        df, {{"xaxis": METRIC_LAYOUTS.get(metric, {{}})}}, title=metric)
+                        df, {{"xaxis": METRIC_LAYOUTS.get(metric, {{}})}}, title=metric,
+                        sites=_servers)
                     figs.append(go.FigureWidget(fig))
                 except Exception as exc:
                     figs.append(widgets.HTML(f"<b>{{metric}}</b><pre>{{exc}}</pre>"))
@@ -825,7 +929,10 @@ def render(_=None):
                if w_to and w_to.value else datetime.now(timezone.utc))
     from_dt = to_dt - timedelta(days=w_duration.value if w_duration else 7)
 
-    region_regex = qb.format_regex(ctx.get("region") or [])
+    # Org selector is a placeholder wired into the report's region_regex slot
+    # until the org-filter backend work lands ('.*' = all).
+    _org_val = ctx.get("organization") or ".*"
+    region_regex = ".*" if _org_val == ".*" else str(_org_val)
 
     out.clear_output(wait=True)
     with out:
@@ -854,10 +961,16 @@ def render(_=None):
             display(go.FigureWidget(rt.plotly_calibration_scatter(_scatter_df)))
 
             display(Markdown("### Calibration report"))
-            _table_df = df.drop(columns=["BCargs", "Breadcrumb"], errors="ignore")
-            display(HTML(
+            _table_df = df.copy()
+            _bc = next((c for c in df.columns if c.lower() == "breadcrumb"), None)
+            if _bc:
+                _table_df[_bc] = df[_bc].apply(
+                    lambda b: f\'<a href="{rt.breadcrumb_to_url(str(b))}" target="_blank">{b}</a>\'
+                    if str(b).strip() else "")
+                _table_df = _table_df.rename(columns={_bc: "Breadcrumb"})
+            display(widgets.HTML(
                 \'<div style="height:500px;overflow:auto">\'
-                + _table_df.to_html(index=False, na_rep="")
+                + rt.to_html_sticky(_table_df, index=False, na_rep="", escape=False)
                 + \'</div>\'
             ))
 
@@ -918,9 +1031,16 @@ def render(_=None):
             df = None
 
         if df is not None and not df.empty:
-            display(HTML(
+            _display_df = df.copy()
+            _bc = next((c for c in df.columns if c.lower() == "breadcrumb"), None)
+            if _bc:
+                _display_df[_bc] = df[_bc].apply(
+                    lambda b: f\'<a href="{{rt.breadcrumb_to_url(str(b))}}" target="_blank">{{b}}</a>\'
+                    if str(b).strip() else "")
+                _display_df = _display_df.rename(columns={{_bc: "Breadcrumb"}})
+            display(widgets.HTML(
                 \'<div style="height:600px;overflow:auto">\'
-                + df.to_html(index=False, na_rep="")
+                + rt.to_html_sticky(_display_df, index=False, na_rep="", escape=False)
                 + \'</div>\'
             ))
 
@@ -940,13 +1060,9 @@ if url_params:
 
 _DISPLAY = '''\
 # --- Display the app ---
-if w_from is not None:
-    _date_row = widgets.HBox([w_from, w_to], layout=widgets.Layout(margin='2px 0'))
-elif w_to is not None and w_duration is not None:
-    _date_row = widgets.HBox([w_to, w_duration], layout=widgets.Layout(margin='2px 0'))
-else:
-    _date_row = widgets.HTML('')
-display(widgets.VBox([ctrl.box, _date_label, _date_row, w_run, out]))
+# _date_row is inserted inside ctrl.box (right after the method selector) by
+# Controls(after=...); only the status label, Run button, and output remain here.
+display(widgets.VBox([ctrl.box, _date_label, w_run, out]))
 '''
 
 
@@ -959,7 +1075,7 @@ def build_notebook(dashboard, flavor: str = 'prod') -> nbformat.NotebookNode:
     method_preamble = _EXP_METHOD_PREAMBLE if flavor == 'exp'                          else ""
     before_table    = _FLEET_BEFORE_TABLE  if flavor == 'fleet'                        else ""
     date_pickers    = (_DATE_PICKERS_EXP      if flavor == 'exp'
-                       else _DATE_PICKERS_DURATION if flavor in ('calibration', 'internal')
+                       else _DATE_PICKERS_DURATION if flavor in ('calibration', 'internal', 'prod')
                        else _DATE_PICKERS_NONE)
     nb = new_notebook()
     intro = info["intro"].strip()

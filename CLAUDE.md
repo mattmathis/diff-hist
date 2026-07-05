@@ -38,25 +38,34 @@ project/
 │   │                       #   plotly_combined_figure (PDF+CDF dual-axis figure);
 │   │                       #   metro_barchart, metro_barchart_clickable (bar chart + click nav);
 │   │                       #   fleet_map (Scattergeo world map);
+│   │                       #   run_competition_report, run_calibration_report,
+│   │                       #   plotly_calibration_scatter (internal/calibration reports);
+│   │                       #   regional_details_url, isp_link_text, breadcrumb_to_url
+│   │                       #     (Regional Details deep-link builders);
 │   │                       #   asn_regex; legacy SQL-transform helpers
 │   ├── notebook_builder.py # Assemble .ipynb; serialize/filter variables;
 │   │                       #   _filter_for_cached, _filter_for_exp,
-│   │                       #   _filter_for_fleet, _filter_for_barchart;
+│   │                       #   _filter_for_fleet, _filter_for_barchart,
+│   │                       #   _filter_for_calibration, _filter_for_internal;
 │   │                       #   _compact_json; build_notebook(flavor=)
 │   └── widget_builder.py   # Controls class: ipywidgets + chained query dropdowns;
 │                           #   CheckboxGroup; textbox (Text widget) support;
-│                           #   dynamic_default field for runtime-evaluated defaults
+│                           #   dynamic_default field for runtime-evaluated defaults;
+│                           #   presets + asn_presets (URL-param pre-selection)
 ├── tools/
 │   ├── convert.py          # Driver: parse dashboard → write notebooks.stage/
 │   │                       #   auto-detects flavor; calls gen_deps.gen_all()
 │   ├── gen_deps.py         # Generate docs/dependencies.md (BQ↔notebook map)
 │   └── gen_docs.py         # Fetch BQ routine/table definitions → docs/functions/*.md
 ├── dashboards/             # Input: Grafana dashboard JSON files
+│   └── internal/           # Internal-only dashboards (competition reports)
 ├── docs/
 │   ├── dependencies.md     # Auto-generated BQ↔notebook dependency map
 │   └── functions/          # Generated BQ reference docs (one .md per routine/table)
 ├── notebooks.stage/        # Converter output — gitignored, rerun-safe
+│   └── internal/           # Staged output for internal-flavor dashboards
 └── notebooks/              # Curated .ipynb files (hand-merged from notebooks.stage/)
+    └── internal/           # Curated internal-only notebooks
 ```
 
 ### Notebook output convention
@@ -84,10 +93,17 @@ Two complementary mechanisms prevent notebook outputs from being committed:
 | `Experimental Regional Details Dashboard.json` | `exp` | Developer use; multiple BQ backends; composite method string |
 | `Global Metro Bar Chart-*.json` | `barchart` | Summary bar charts per metro; navigation links to regional details |
 | `Fleet and Egress load-*.json` | `fleet` | Table + global map; no histograms |
+| `M-Lab Calibration Dashboard-*.json` | `calibration` | KS-distance scatter + ranked report table; Details column deep-links to Regional Details |
+| `internal/Differential Competition Report for *-*.json` | `internal` | Internal-only competition reports (minRTT / throughput); Details column deep-links to Regional Details. Staged to `notebooks.stage/internal/` |
 
-Flavor is auto-detected by `tools/convert.py`: `methodsrc` variable → `exp`;
-`method` variable → `prod`; `barchart` panel type → `barchart`; else → `fleet`.
-Override with `--flavor prod|exp|barchart|fleet`.
+Flavor is auto-detected by `tools/convert.py` in this order: panel SQL contains
+`competition_report` → `internal`; SQL contains `calibration_report` →
+`calibration`; `methodsrc` variable → `exp`; `method` variable → `prod`;
+`barchart` panel type → `barchart`; else → `fleet`.
+Override with `--flavor prod|exp|barchart|fleet|calibration|internal`.
+
+`internal`-flavor dashboards are written to the `internal/` subdirectory of the
+output dir, and the converter strips the `_do_not_share` suffix from the slug.
 
 ## Workflow
 
@@ -124,6 +140,32 @@ kill $(lsof -t -i:8866)   # default port 8866
 
 Voilà runs as a systemd service on both instances (starts on boot, restarts on crash).
 `annealing` has a static IP and nginx reverse proxy with TLS; `mm-byos-tester3` IP may change on stop/start.
+
+### BigQuery data access (annealing identity)
+
+The notebooks query BQ as the **instance's default compute service account**
+(`1031725934094-compute@developer.gserviceaccount.com`) — the GCE application
+default credential, no user `gcloud` login or ADC file involved. That SA reads
+`mlab-collaboration.mm_preproduction`, so **`method=cached` works**.
+
+**`method=live` / `live-DS16` reach further:** the `unified_ndt7_isp_histograms`
+function calls `get_ndt7_data`, which reads M-Lab source tables in the
+**`measurement-lab`** project (e.g. `measurement-lab.ndt.ndt7_dynamic`). The SA
+must be authorized for that data or the query returns
+`403 Access Denied: … measurement-lab:ndt.ndt7_dynamic`.
+
+**Access model:** the SA gets M-Lab data access the same way people do — by being
+a **member of `discuss@measurementlab.net`** (M-Lab grants BQ read to that group),
+so it inherits every grant the group has, present and future. The SA has been
+added to the group, so `live` / `live-DS16` work on annealing. To re-grant on a
+new instance, add its SA to the group (Google Groups UI, or `gcloud identity
+groups memberships add --group-email=discuss@measurementlab.net
+--member-email=<sa-email>`); allow a few minutes to propagate, and note the group
+must permit external members (SA domain is `developer.gserviceaccount.com`).
+
+> **Note:** Regional Details is no-auth, so the SA's discuss-level access means
+> the public server can run any query the discuss group can — the intended
+> "publicly queryable" behaviour.
 
 ### nginx + TLS setup (one-time on annealing)
 
@@ -237,6 +279,17 @@ Example URL (single-value params only; multi-select requires `DASH_PRESETS`):
 http://localhost:8866/voila/render/regional_details_dashboard.ipynb?anchor=lga&radius=100&ISPcount=10&binSize=25
 ```
 
+**Regional Details deep-link params** (used by the Details/breadcrumb links and
+the bar-chart navigation):
+- `sites=lga04,lga05` — pre-select servers by site code. If `anchor=` is absent,
+  it is derived from the first site code.
+- `ISPs=7922,8030` — pre-select client ISPs by **AS number** (matched against the
+  first space-delimited token of each ISP option). Wired through
+  `Controls(..., asn_presets=...)` and re-applied after each chained-query refresh.
+
+`sites=`/`ISPs=` change the pre-*selection* only, not the dropdown *contents* —
+the selected entries are assumed to be present in the populated options.
+
 For scripted or test overrides set `DASH_PRESETS` to a JSON object:
 ```bash
 DASH_PRESETS='{"anchor":"lga","region":["lga04","lga05"]}' voila notebooks/<slug>.ipynb
@@ -247,14 +300,24 @@ DASH_PRESETS='{"anchor":"lga","region":["lga04","lga05"]}' voila notebooks/<slug
 ### Python histogram dispatch (`runtime.fetch_histograms`)
 
 Replaces the BQ wrapper functions (`access_ndt7_isp_histograms`,
-`access_exp_ndt7_isp_histograms`) with a single Python function that dispatches on
-`method` to the right BQ backend:
+`access_exp_ndt7_isp_histograms`) with a single Python function that dispatches
+on the **backend token** — the first `-`-delimited segment of `method` — to the
+right BQ backend. Trailing modifiers (`DS16`, `DS1C`, `DS1V`, `showLocate`, …)
+are passed through in the full `method` string but do **not** select the
+backend, so e.g. `live-DS16` runs against the live (unified) backend:
 
-| method contains | BQ function called | Args |
+| backend token | BQ function called | Args |
 |---|---|---|
 | `cached` | `access_ndt7_cached_histograms` | `(field, site_regex, isp_count)` |
-| `exp` / `DS16` / `DS1C` / `DS1V` | `experimental_ndt7_isp_histograms` | `(method, x_axis, bin_size, field, start, end, site_regex)` |
-| anything else (live) | `unified_ndt7_isp_histograms` | same 7 args |
+| `exp` | `experimental_ndt7_isp_histograms` | `(method, x_axis, bin_size, field, start, end, site_regex)` |
+| anything else (`live`) | `unified_ndt7_isp_histograms` | same 7 args |
+
+Raw query results are memoised by SQL text in the module-level
+`runtime._HIST_CACHE` (override per-call with the `cache=` arg; clear with
+`runtime.clear_hist_cache()`). Because the metric/`field` is part of the SQL,
+each metric caches separately, and the cache persists across re-renders so
+toggling the ISP selection or re-clicking **Run** reuses the query rather than
+re-hitting BQ. The cache is per-kernel (see the Voilà vs. Jupyter section).
 
 After fetching, the function:
 1. **Densifies** sparse backends (experimental/unified) per `(siteName, ISPname)` pair
@@ -280,6 +343,11 @@ Single figure with two vertically offset Y axes:
 - CDF: top domain `[0.56, 1.0]`, right axis, fixed range `[0, 1]`.
 - Legend anchored inside the gap; one entry per site showing `"{site} ({n:,})"`.
 - Height 600 px; 2 px line width.
+- `sites=` (the full selected-server set) forces **every** selected server into
+  the legend even with zero data for that ISP — missing servers get an empty
+  trace labelled `"(0)"`. Colours index into the sorted union of `sites`, which
+  is identical for every per-ISP chart, so a given server keeps the same colour
+  across all charts. `sites=None` falls back to data-only (legacy behaviour).
 
 ### Variable interpolation (`converter/query_builder.py`)
 
@@ -293,33 +361,69 @@ fetched via `fetch_histograms`, not SQL templates.
 
 ### Chained query dropdowns (`converter/widget_builder.py`)
 
-- `Controls(variables, client, presets)` — wires observer chains by inspecting
-  each query variable's SQL for references to other variable names.
+- `Controls(variables, client, *, presets=None, asn_presets=None, after=None)` —
+  wires observer chains by inspecting each query variable's SQL for references
+  to other variable names.
+- `presets` — per-variable value overrides (from URL params).
+- `asn_presets` — maps a variable name to a list of AS-number strings; after that
+  variable's options are (re)populated, any option whose first space-delimited
+  token matches is selected. Takes priority over `default_select` and is
+  re-applied on every chained refresh (e.g. `{'ClientISP': ['7922', '8030']}`).
+- `after` — maps a variable name to an extra widget spliced into the layout
+  immediately after that variable's row (used to place the date row right after
+  the method selector). Ignored if the named variable has no widget.
 - `default_select: "all" | "half"` — re-applied when anchor changes invalidates
   the previous server/ISP selection.
 - `CheckboxGroup` — multi-select implemented as individual Checkbox widgets.
 - `type=textbox` variables → `widgets.Text`.
 
+**Dynamic widget visibility** (wired in the `_CONTROLS` render cell, not in
+`Controls`): observers toggle `layout.display` — pure widget state, so Voilà-safe.
+- **Date row** — hidden when the backend token (`method`/`methodsrc` split on `-`)
+  is `cached`; shown for `live`/`exp`.
+- **`extra_rows`** — shown only when the selected servers (`region`) span more
+  than one metro (distinct 3-letter IATA prefixes of the site codes).
+
+### Tables: sticky headers (`runtime.to_html_sticky`)
+
+`to_html_sticky(df, **kwargs)` is a drop-in for `df.to_html(...)` that injects
+inline `position: sticky; top: 0` styling into each `<th>`, so column labels stay
+pinned while the body scrolls inside its `overflow:auto` container. Uses **inline
+`style`** (not a `<style>` block or `Styler.set_sticky`) because Voilà's DOMPurify
+strips `<style>`; the background uses `var(--jp-layout-color0,#fff)` to adapt to
+light/dark themes. Used by the fleet, competition-report, and calibration tables.
+
 ### Notebook flavors (`notebook_builder.build_notebook(flavor=)`)
 
 **`prod`** — `_filter_for_cached`:
-- `method` locked to `cached`.
+- `method` offers `cached` / `live` / `live-DS16` (default `cached`).
 - `table_field` / `field` pruned to cached-supported fields.
 - `mode` removed (always PDF+CDF). `verbose` renamed to `table_style` (none/Summary/Verbose).
 - `metrics` multi-select added (default: `MeanThroughputMbps`).
+- `ClientISP` defaults to **all** selected (`default_select='all'`).
+- `extra_rows` textbox inserted after `ISPcount` (Client Rows); see Extra rows below.
 - Cached date range displayed after Run (from `metroStart`/`metroEnd` columns).
-- No date pickers — data is always the latest cached window.
+- Uses `_DATE_PICKERS_DURATION` (end date + duration 1/7/28/30), hidden unless
+  the method is non-cached (see Dynamic widget visibility).
 
 **`exp`** — `_filter_for_exp`:
-- `methodsrc` (exp-DS16 / exp-DS1C / cached / exp-DS1V), `locate`, `clientname`
+- `methodsrc` (exp-DS16 / exp-DS1C / cached / live / exp-DS1V), `locate`, `clientname`
   kept from dashboard.
-- `method` composite variable dropped — the render cell builds it in Python:
-  `f"{methodsrc}-{locate}-{sub_method}[-{extra_flags}]"`.
+- `method` composite variable dropped — the render cell (`_EXP_METHOD_PREAMBLE`)
+  builds it in Python: `cached`→`"cached"`, `live`→`"live"` (exp-only modifiers
+  are **not** applied, so switching exp→live can't pollute the live method string
+  with hidden values), exp backends → `exp-<locate>-<sub_method>[-<extra_flags>]`.
 - `sub_method` dropdown and `extra_flags` textbox inserted at the top, before anchor.
 - `verbose` renamed to `table_style` (none/Summary/Verbose, default none) — same as prod.
 - `metrics` multi-select added. No option pruning — exp backend supports more fields.
-- DatePicker widgets for `from_dt` / `to_dt`, defaulting to the most recent
-  Sunday week (UTC): days since Sunday = `(_today_utc.weekday() + 1) % 7`.
+- `ClientISP` defaults to **all** selected; `extra_rows` textbox after `ISPcount`.
+- Keeps its Start/End `DatePicker` range (`_DATE_PICKERS_EXP`), defaulting to the
+  most recent Sunday week (UTC); hidden unless the method is non-cached.
+
+**Extra rows** (`prod` / `exp`) — a textbox (default `0`) shown only when the
+selected servers span multiple metros. Its value is **added to `ISPcount` only
+for the BQ histogram fetch** (so a multi-metro query returns enough ranked ISPs
+to cover every metro); it is not used for the ClientISP dropdown or display.
 
 **`barchart`** — `_filter_for_barchart`:
 - Drops Grafana-specific variables: `prometheus`, `detailURL`.
@@ -332,6 +436,27 @@ fetched via `fetch_histograms`, not SQL templates.
   notebook always opens on a recent date rather than the stale Grafana value.
 - No metrics chooser; table-only layout.
 
+**`calibration`** — `_filter_for_calibration`:
+- Drops infrastructure variables (`datasource`, `dataset`, `detailURL`) and
+  parameters locked as Python constants (`xAxis`, `binSize`).
+- `${dataset}` is pre-substituted in any remaining `query_sql` since the
+  `dataset` variable is dropped.
+- `method` limited to `cached` / `live` (default `cached`).
+- `region` is dropped in favour of the **same stubbed `organization` selector as
+  the competition reports** (`_org_var()` / `_ORG_QUERY`, default `.*` = all orgs).
+  Its value is wired into the report's `region_regex` slot as a placeholder until
+  the org-filter backend work lands. `radius` defaults to 100.
+- Renders a KS-distance-vs-ratio scatter plus the ranked calibration report
+  table (`_CALIBRATION_RENDER`, sticky headers). Uses `_DATE_PICKERS_DURATION`.
+
+**`internal`** — `_filter_for_internal`:
+- Drops `datasource`, `PromSource`, `autoOrg`, `dataset`, `detailURL`, `dateRange`.
+- Replaces `organization` with a BQ-backed query dropdown (`_ORG_QUERY`,
+  default `.*` = all orgs); `method` limited to `cached` / `live`.
+- Render cell (`_INTERNAL_RENDER`) detects report type (`throughput` vs `minRTT`)
+  from panel SQL. Uses `_DATE_PICKERS_DURATION`.
+- Written to the `internal/` output subdirectory (see Dashboards above).
+
 ### Bar chart navigation (`runtime.metro_barchart`, `runtime.metro_barchart_clickable`)
 
 `metro_barchart(df, title, isp_count, target_notebook)` — grouped Plotly bar chart
@@ -342,6 +467,26 @@ with `customdata` URL fields. `display(fig)` + `fig._config =
 figure in a `FigureWidget`; clicking a bar updates *link_widget* (an
 `ipywidgets.HTML`) with a navigation link to Regional Details. Works in Voilà
 because it uses a Python `on_click` callback to update a widget — no JS injection.
+
+### Details deep-links from report tables (`runtime.breadcrumb_to_url`)
+
+The `internal` competition reports and the `calibration` report return a
+space-delimited `breadcrumb` column (`site1 site2 ASnumber [ISPname]`). The
+render templates (`_INTERNAL_RENDER`, `_CALIBRATION_RENDER`) build a clickable
+**Details** link from each row by parsing that column with
+`runtime.breadcrumb_to_url`, which delegates to `regional_details_url`:
+
+- Only the **AS number** goes into the href (names are fragile); the full
+  breadcrumb string remains the anchor text.
+- The column is matched **case-insensitively** and the displayed header is
+  renamed to `Breadcrumb`.
+- The link is rendered via **`ipywidgets.HTML`** (not `IPython.display.HTML`):
+  Voilà's DOMPurify strips `href` attributes from `display(HTML(...))` output
+  but preserves them in widget HTML.
+- The old `BCargs` column was incomplete test code and is no longer used.
+
+> **Status:** deployed to annealing but **not yet verified against live BQ**
+> (auth lapsed during development). Confirm the links resolve on a live run.
 
 ### Fleet global map (`runtime.fleet_map`)
 
@@ -357,6 +502,55 @@ are collapsed by default in JupyterLab and Voilà. Users see only widget output.
 
 Selector Diagnostics is rendered in an `ipywidgets.Accordion` with
 `selected_index = None` so it is collapsed by default.
+
+### Voilà vs. Jupyter behavioral differences
+
+These notebooks run in two environments — interactive JupyterLab and the Voilà
+webapp — and several design choices exist to paper over the gaps. When editing,
+assume Voilà is the stricter target:
+
+**Rendering / HTML / JS**
+- **DOMPurify sanitization** — Voilà scrubs `display(HTML(...))` output: it
+  strips `href`, `target`, `on*` handlers, `<script>`, `<iframe>`, and some
+  inline styles. Jupyter renders it verbatim. Emit clickable/link HTML through
+  **`ipywidgets.HTML`**, which is not sanitized the same way (see the Details
+  deep-links and bar-chart navigation sections).
+- **No injected JS runs** — `IPython.display.Javascript(...)`, `window.open`,
+  and Plotly client-side JS callbacks do nothing in Voilà. Use Python
+  `FigureWidget.on_click` callbacks that update a widget, never JS handlers.
+- **Plotly** — `go.FigureWidget` (comm-backed) works in both; a plain
+  `go.Figure` relying on native JS interactions can differ. Prefer FigureWidget
+  for anything interactive.
+
+**Execution model & errors**
+- **Auto run, top-to-bottom, once** at page load — no manual or out-of-order
+  cell execution. Don't rely on run order that only holds in interactive use.
+- **Tracebacks suppressed by default** (`show_tracebacks=False`) — an exception
+  can blank or truncate the page instead of showing an inline traceback. The
+  render callbacks wrap queries in try/except and display errors as HTML, but an
+  error in the setup/import cells (before that guard) can blank the page. Set
+  `show_tracebacks=True` in `voila.json` while debugging.
+- **No cell toolbar / edit / restart** — all interaction must go through
+  widgets (the `w_run.on_click` "Run" button pattern).
+
+**Kernel & in-memory state lifecycle**
+- **Fresh kernel per page load** — reloading the Voilà URL re-runs everything
+  and resets all in-memory state. In Jupyter the kernel persists across reloads.
+  Consequence: `runtime._HIST_CACHE` (the histogram query cache) is per-kernel —
+  it lives for one Voilà session, starts empty on every page load, and is **not**
+  shared between concurrent viewers (each gets their own kernel).
+- **Idle culling** — per `voila.json`, idle kernels are culled; after that the
+  widgets go dead and the user must reload (losing cache/state). Jupyter doesn't
+  cull like this.
+
+**Input & environment**
+- **`get_query_string()`** returns empty in plain Jupyter (no HTTP request); the
+  URL-params cell handles the absent case.
+- **No stdin** — `input()` and interactive prompts hang/fail in Voilà.
+- **Paths & static assets** — Voilà serves under `/voila/render/...` with its own
+  static handling; relative file links and served files resolve differently than
+  Jupyter's `/tree`/`/notebooks` paths. Notebook-to-notebook URL param passing is
+  one instance of this broader difference.
 
 ### BQ dependency documentation (`tools/gen_deps.py`)
 
