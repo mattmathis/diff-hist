@@ -7,5 +7,6 @@ mkdir -p internal
 cp ../notebooks.stage/*.ipynb .
 cp ../notebooks.stage/internal/*.ipynb internal/
 cp ../notebooks/index.ipynb .
+cp ../notebooks/internal/index.ipynb internal/
 
 jupyter notebook . &

@@ -80,7 +80,9 @@ target/
 
 # Converter staging output (regenerable; merged by hand into notebooks/)
 notebooks.stage/
-notebooks.test/*.ipynb
+# notebooks.test/ is a throwaway assembly dir (test-notebooks.sh rebuilds it);
+# only the script is tracked. ** covers the internal/ subdir too.
+notebooks.test/**/*.ipynb
 
 # IPython
 profile_default/
