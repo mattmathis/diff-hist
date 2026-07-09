@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- GENERATED from diff-hist/docs/public/regional_details_dashboard.md by tools/gen_public_docs.py — do not edit. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Regional Details Dashboard</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.55;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#222}h1,h2,h3{line-height:1.25}table{border-collapse:collapse;margin:1rem 0}th,td{border:1px solid #ccc;padding:4px 9px;text-align:left;vertical-align:top}code{background:#f3f3f3;padding:1px 4px;border-radius:3px}blockquote{border-left:4px solid #ddd;margin:1rem 0;padding:.2rem 1rem;color:#555}a{color:#1a5fb4}</style>
+</head>
+<body>
+<main>
+<h1>Regional Details Dashboard</h1>
+<p>Detailed performance distributions for the cross-product of selected client ISPs
+and M-Lab servers near an anchor metro. Lines that lie together mean uniform
+service; lines that spread apart reveal servers that perform better or worse for
+some users.</p>
+<p>The <strong>Anchor Metro</strong> defines the region: it preselects the M-Lab servers within
+the chosen <strong>radius</strong> and ranks the client ISPs by traffic in that metro. A
+combined PDF + CDF chart is then shown for every selected server crossed with
+every selected client ISP, with test counts in the legend. See the paper or
+slides for how differences in these plots reveal asymmetric mid-path routing
+that can adversely affect users.</p>
+<h2>Selectors</h2>
+<ul>
+<li><strong>Anchor Metro</strong> — geographic centre used to preselect servers and rank client
+ISPs. Changing it re-populates both Servers and Client ISPs.</li>
+<li><strong>Radius (km)</strong> — how far from the anchor to include additional M-Lab servers.</li>
+<li><strong>Servers</strong> — M-Lab sites within the radius; defaults to all.</li>
+<li><strong>Client Rows</strong> — how many top-ranked ISPs to pre-process.</li>
+<li><strong>Client ISPs</strong> — subset of Client Rows to plot; defaults to <strong>all</strong> selected.</li>
+<li><strong>Extra rows</strong> — appears when the selected servers span multiple metros. Client
+ISPs are ranked independently per metro, so an ISP's rank can differ between
+them; Extra rows pulls in additional ranked ISPs so cross-metro comparisons
+aren't truncated.</li>
+<li><strong>Metrics</strong> — which metrics to plot: MinRTT (log and linear), MeanThroughputMbps,
+LossRate.</li>
+<li><strong>Table</strong> — whether to show the summary-statistics table (<code>none</code> / <code>Summary</code> /
+<code>Verbose</code>), and <strong>Table Field</strong> — which metric it reports.</li>
+<li><strong>Method</strong> — <code>cached</code> (default), <code>live</code>, or <code>live-DS16</code>. Date pickers appear
+only for the non-cached methods.</li>
+</ul>
+<h2>Reading the charts</h2>
+<p>Each chart row is one client ISP; each chart is one metric, with one line per
+M-Lab server site. The figure is split vertically — <strong>PDF</strong> (probability density)
+in the bottom half, <strong>CDF</strong> (cumulative distribution) in the top half — sharing
+the same x-axis and a consistent colour per site. Legend labels include the
+total test count.</p>
+<h2>Cached data</h2>
+<p>With <code>method=cached</code> the notebook uses pre-computed histograms; the actual data
+date range is shown below the selectors after clicking <strong>Run / Refresh</strong>.</p>
+</main>
+</body>
+</html>

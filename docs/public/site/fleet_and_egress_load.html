@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- GENERATED from diff-hist/docs/public/fleet_and_egress_load.md by tools/gen_public_docs.py — do not edit. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet and Egress Load</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.55;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#222}h1,h2,h3{line-height:1.25}table{border-collapse:collapse;margin:1rem 0}th,td{border:1px solid #ccc;padding:4px 9px;text-align:left;vertical-align:top}code{background:#f3f3f3;padding:1px 4px;border-radius:3px}blockquote{border-left:4px solid #ddd;margin:1rem 0;padding:.2rem 1rem;color:#555}a{color:#1a5fb4}</style>
+</head>
+<body>
+<main>
+<h1>Fleet and Egress Load</h1>
+<p>Egress volume and cost across the M-Lab server fleet — an internal dashboard for
+fleet lifecycle management and capacity planning.</p>
+<p>A world map plus a filterable inventory table let you see where traffic and
+serving value are concentrated across the fleet.</p>
+<h2>What it shows</h2>
+<p><strong>World map</strong> — one marker per metro, coloured by log₁₀(tests/day). Hover for
+metro detail: servers, tests/day, TB/month, Mbps, and estimated cost. Select
+<code>metros</code> and <code>sites</code> in Display to include per-site detail in the hover.</p>
+<p><strong>Table</strong> — a filterable inventory at three levels:</p>
+<table>
+<thead>
+<tr>
+  <th>Level</th>
+  <th>Rows</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td>Summaries</td>
+  <td>global total, per-continent and per-server-type subtotals</td>
+</tr>
+<tr>
+  <td>Metros</td>
+  <td>one row per metro with aggregate traffic and value</td>
+</tr>
+<tr>
+  <td>Sites</td>
+  <td>one row per M-Lab site</td>
+</tr>
+</tbody>
+</table>
+<p>Columns include server count, tests/day, average Mbps, kB/test, TB/month,
+deployment SKU, and estimated daily/annual value.</p>
+<h2>Controls</h2>
+<table>
+<thead>
+<tr>
+  <th>Control</th>
+  <th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+  <td><strong>End date</strong></td>
+  <td>last day of the sample window; defaults to two days ago (UTC)</td>
+</tr>
+<tr>
+  <td><strong>Duration</strong></td>
+  <td>sample window: 1, 7, or 30 days</td>
+</tr>
+<tr>
+  <td><strong>Display</strong></td>
+  <td>which row levels to show in the table and map hover</td>
+</tr>
+</tbody>
+</table>
+<h2>Value model</h2>
+<p>Serving value is estimated at a flat $0.10/GB egress — this generally
+overestimates value in North America and Europe and underestimates it in the
+Pacific rim and most of the Southern Hemisphere. Egress is measured from TCPinfo
+<code>BytesSent</code> for both download payload and upload ACKs.</p>
+</main>
+</body>
+</html>

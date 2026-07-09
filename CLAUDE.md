@@ -67,9 +67,11 @@ project/
 │   │                       #   auto-detects flavor; calls gen_deps.gen_all()
 │   ├── gen_deps.py         # Generate docs/dependencies.md (BQ↔notebook map)
 │   ├── gen_docs.py         # Fetch BQ routine/table definitions → docs/functions/*.md
-│   └── extract_backend.py  # Extract the BQ fleet (closure from notebook entry
-│                           #   points + scheduled queries) → backend/*.sql via
-│                           #   INFORMATION_SCHEMA.ddl; round-trip deterministic
+│   ├── extract_backend.py  # Extract the BQ fleet (closure from notebook entry
+│   │                       #   points + scheduled queries) → backend/*.sql via
+│   │                       #   INFORMATION_SCHEMA.ddl; round-trip deterministic
+│   └── gen_public_docs.py  # Public docs pipeline: docs/public/*.md → notebook
+│                           #   first cells + notebooks.stage/ indexes + site/ HTML
 ├── backend/                # Deployable SQL source of the BQ fleet (git = truth)
 │   ├── routines/           # TABLE FUNCTIONs (histogram + report logic)
 │   ├── views/ · tables/    # views; table schema DDL (data lives in BQ)
@@ -79,7 +81,9 @@ project/
 │   └── internal/           # Internal-only dashboards (competition reports)
 ├── docs/
 │   ├── dependencies.md     # Auto-generated BQ↔notebook dependency map
-│   └── functions/          # Generated BQ reference docs (one .md per routine/table)
+│   ├── functions/          # Generated BQ reference docs (one .md per routine/table)
+│   └── public/             # Public dashboard docs (source of truth) + LAYOUT.md;
+│       └── site/           #   deterministic static HTML (committed, served)
 ├── notebooks.stage/        # Converter output — gitignored, rerun-safe
 │   └── internal/           # Staged output for internal-flavor dashboards
 └── notebooks/              # Curated .ipynb files (hand-merged from notebooks.stage/)
@@ -606,6 +610,26 @@ Parses a dashboard JSON, fetches each backtick-quoted BQ resource via
 `bq show --routine` or `bq show`, probes the live output schema, and writes one
 reviewable Markdown file per resource to `docs/functions/`. Re-running overwrites
 files including hand-edited Description prose.
+
+### Public documentation pipeline (`tools/gen_public_docs.py`)
+
+**Public** (user-facing) docs are distinct from the developer docs above. Each
+tool is authored once in `docs/public/<slug>.md` (the full document, the source
+of truth); the index blurb and the notebook first cell are *extracted from the
+top* via `<!-- snip:index -->` / `<!-- snip:intro -->` markers. `_project.md` is
+the project intro; `_boilerplate.md` is the first-cell template. Full design in
+`docs/public/LAYOUT.md`.
+
+`gen_public_docs.py` (standalone — kept out of `notebook_builder.py` so this
+public-docs work stays independent of the converter/backend rework) runs *after*
+`convert.py` and produces, deterministically:
+- each staged notebook's **first cell** (intro + boilerplate + links);
+- `notebooks.stage/index.ipynb` and `notebooks.stage/internal/index.ipynb`
+  (the index is now generated, not hand-maintained) — hand-merged into `notebooks/`;
+- static HTML in **`docs/public/site/`** (mistune, no timestamps → committed
+  without churn), served at `annealing.mattmathis.net/differential-histograms/<slug>`.
+
+Every generated artifact carries a `GENERATED from diff-hist/<path>` comment.
 
 ## Requirements
 

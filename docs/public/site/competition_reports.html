@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- GENERATED from diff-hist/docs/public/competition_reports.md by tools/gen_public_docs.py — do not edit. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Competition Reports</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;line-height:1.55;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#222}h1,h2,h3{line-height:1.25}table{border-collapse:collapse;margin:1rem 0}th,td{border:1px solid #ccc;padding:4px 9px;text-align:left;vertical-align:top}code{background:#f3f3f3;padding:1px 4px;border-radius:3px}blockquote{border-left:4px solid #ddd;margin:1rem 0;padding:.2rem 1rem;color:#555}a{color:#1a5fb4}</style>
+</head>
+<body>
+<main>
+<h1>Competition Reports</h1>
+<p>Two dashboards — <strong>Competition Reports for minRTT</strong> and <strong>for Throughput</strong> —
+identify other nearby M-Lab servers that outperform your servers to some client
+networks. This can be useful when planning peering upgrades.</p>
+<p>Each row reflects one triplet ⟨your_site, site2, clientISP⟩ where the path from
+M-Lab site2 to the client ISP outperforms the path from your M-Lab site (the
+target site) to the same client ISP.</p>
+<ul>
+<li>For <strong>minRTT</strong>, the comparison is the difference between the arithmetic means
+of the minRTTs.</li>
+<li>For <strong>throughput</strong>, the comparison is the ratio of the geometric means of the
+throughputs.</li>
+</ul>
+<h2>Columns</h2>
+<ul>
+<li><strong>targetSite</strong> — one of your M-Lab servers.</li>
+<li><strong>targetName</strong> — the name associated with your server's ASN.</li>
+<li><strong>Amean</strong> — arithmetic mean of minRTT (via NDT) over the path from your server
+to users in the client ISP.</li>
+<li><strong>Gmean</strong> — geometric mean of NDT throughput over that same path.</li>
+<li><strong>site2</strong> — some other M-Lab server.</li>
+<li><strong>Site2name</strong> — the name associated with site2's AS number. This may not match
+site2's hosting organization, e.g. if it uses its upstream provider's origin
+ASN.</li>
+<li><strong>Amean2</strong> — arithmetic mean of minRTT over the path from site2 to users in
+the client ISP.</li>
+<li><strong>Gmean2</strong> — geometric mean of NDT throughput over that path.</li>
+<li><strong>clientISP</strong> — the origin ASN and name of the ISP providing connectivity to
+the users running NDT.</li>
+<li><strong>KSdistance</strong> — a robust indication of the difference in the shape of the
+distributions (<a href="https://en.wikipedia.org/wiki/Kolmogorov%E2%80%93Smirnov_test">Wikipedia</a>).
+More robust than the ratio but with poor intuitive meaning; if the ratio is
+small and the KS distance is large, inspect the detailed plots.</li>
+<li><strong>deltaAmean</strong> — the difference Amean − Amean2, in milliseconds.</li>
+<li><strong>pctExcess</strong> — deltaAmean as a percentage: 100 × deltaAmean / Amean2. Often
+irrelevant on short paths, where small absolute differences are large relative
+to the actual path length.</li>
+<li><strong>ratio</strong> — the relative throughputs of the paths, Gmean2 / Gmean. Reads
+directly as a percentage: 1.21 means 21% faster.</li>
+<li><strong>tests</strong> — the number of NDT tests to your target site from this client ISP.</li>
+<li><strong>pctLoad</strong> — percentage load on the target site from this client ISP.
+Note: relative to the sum of the <em>selected</em> client ISPs only, not the total
+load on the target site.</li>
+<li><strong>distance_kM</strong> — great-circle distance between the target site and site2
+registered locations (themselves rounded to IATA locations).</li>
+<li><strong>breadcrumb</strong> — a shorthand summary of how to find the data, shown as a
+clickable <strong>Details</strong> link to the Regional Details dashboard.</li>
+</ul>
+<p>Outbound tests from cloud providers are likely from VPN exit nodes. Those
+measurements probably reflect the entire end-to-end path from the client through
+the tunnel to the M-Lab server, not the path from the cloud provider to the
+M-Lab server. There may be tests originating within the cloud provider itself,
+but they are not generally identifiable in the data.</p>
+</main>
+</body>
+</html>
