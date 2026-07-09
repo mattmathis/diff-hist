@@ -16,6 +16,6 @@ It mirrors Regional Details but exposes the raw `method` backends (cached / live
 ## Notes
 
 For general use, select the `cached` method. See the
-[Regional Details Dashboard](regional_details_dashboard.md) documentation for the
+[Regional Details Dashboard](regional_details_dashboard) documentation for the
 selectors, chart layout, and interpretation — this tool adds developer controls
 on top of that.

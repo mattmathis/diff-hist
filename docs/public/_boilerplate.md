@@ -4,6 +4,7 @@
      {index_url}   = the served project index (annealing home). -->
 
 
-See the **[project overview]({index_url})** for information about differential histograms and how they expose anomalies in Internet mid-paths.
+For information about Differential Histograms and how they expose anomalies in Internet mid-paths
+see the **[project overview]({index_url})**.
 
-Full documentation: **[{tool}]({fulldoc_url})**.
+See **[{tool}]({fulldoc_url})** for complete documentation.

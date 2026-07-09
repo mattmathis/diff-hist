@@ -182,7 +182,9 @@ _FLEET_BEFORE_TABLE = """\
                         if any(d in _display_sel for d in ("metros", "sites")):
                             _map_df = _df[_df["lat"].notna() & _df["long"].notna()].copy()
                             if not _map_df.empty:
-                                display(go.FigureWidget(rt.fleet_map(_map_df)))
+                                _fw = go.FigureWidget(rt.fleet_map(_map_df))
+                                _fw._config = {"responsive": True}   # scale to page width
+                                display(_fw)
 """
 
 _EXP_METHOD_PREAMBLE = """\
@@ -725,9 +727,12 @@ else:
 # The method (or methodsrc, in exp) selector drives date-picker visibility; the
 # date row is spliced into the controls column right after it.
 _method_var = 'methodsrc' if 'methodsrc' in [v['name'] for v in VARIABLES] else 'method'
+# Put endDate + duration on one row (duration second) where both exist (fleet).
+_var_names = [v['name'] for v in VARIABLES]
+_hgroups = [['endDate', 'duration']] if 'endDate' in _var_names and 'duration' in _var_names else []
 ctrl = Controls(VARIABLES, client, presets=url_params,
                 asn_presets={{'ClientISP': _isp_asns}} if _isp_asns else None,
-                after={{_method_var: _date_row}})
+                after={{_method_var: _date_row}}, hgroups=_hgroups)
 w_run = widgets.Button(description="Run / Refresh", button_style="primary", icon="play")
 _date_label = widgets.HTML('')   # filled from query results after Run
 
@@ -808,7 +813,7 @@ def render(_=None):
                     if p.get("type") == "barchart":
                         import ipywidgets as _ipyw
                         _link = _ipyw.HTML(
-                            value='<p style="color:#888;font-size:12px">'
+                            value='<p style="color:var(--jp-content-font-color1,#212121);font-size:12px">'
                                   '&#8592; click a bar to open Regional Details</p>'
                         )
                         _fw = rt.metro_barchart_clickable(
@@ -961,11 +966,14 @@ def render(_=None):
             display(go.FigureWidget(rt.plotly_calibration_scatter(_scatter_df)))
 
             display(Markdown("### Calibration report"))
-            _table_df = df.copy()
-            _bc = next((c for c in df.columns if c.lower() == "breadcrumb"), None)
+            # Drop BCargs (leftover debugging column from an earlier link attempt).
+            _table_df = df.drop(columns=[c for c in df.columns if c.lower() == "bcargs"],
+                                errors="ignore").copy()
+            _bc = next((c for c in _table_df.columns if c.lower() == "breadcrumb"), None)
             if _bc:
-                _table_df[_bc] = df[_bc].apply(
-                    lambda b: f\'<a href="{rt.breadcrumb_to_url(str(b))}" target="_blank">{b}</a>\'
+                _table_df[_bc] = _table_df[_bc].apply(
+                    lambda b: (f\'<a href="{rt.breadcrumb_to_url(str(b))}" target="_blank"\'
+                               f\' style="text-decoration:underline">{b}</a>\')
                     if str(b).strip() else "")
                 _table_df = _table_df.rename(columns={_bc: "Breadcrumb"})
             display(widgets.HTML(

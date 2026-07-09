@@ -199,10 +199,27 @@ def get_cached_date_range(
     Queries ``cached_metro_report`` for the rank-0 summary row whose
     ``ISPname`` encodes the coverage dates, e.g.
     ``'2026-05-22 - 2026-05-28 cached'``.
+
+    A fresh BigQuery client's first query can fail with a transient 4xx; this
+    retries once and never raises, so the date-range label can't break the rest
+    of the render (returns a soft message on failure).
+
+    TODO(v3): this runs the full ``cached_metro_report`` table function just to
+    read one date-range string — unnecessarily expensive. In the v3 design the
+    date range becomes a lightweight "report"; overhaul then. Not worth fixing
+    before v3.
     """
     sql = (f'SELECT ISPname FROM `{dataset}.cached_metro_report`'
            f'("MinRTT", ".*", 1) LIMIT 1')
-    df = run_query(client, sql)
+    df = None
+    for _attempt in range(2):
+        try:
+            df = run_query(client, sql)
+            break
+        except Exception:
+            df = None
+    if df is None:
+        return "unavailable — click Run again"
     if df.empty:
         return "unknown"
     val = str(df['ISPname'].iloc[0])
@@ -598,7 +615,7 @@ def plotly_combined_figure(
         margin=dict(l=50, r=55, t=22, b=15),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#bbb'),
+        font=dict(color='#212121'),
         xaxis=xaxis,
         yaxis=dict(
             title=dict(text='PDF', font=dict(size=12)),
@@ -628,7 +645,7 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
     - Metro total line: servers, T/day, TB/mo, Mbps, cost  ($/day)
     - Per-site lines (if present): T/day, TB/mo, Mbps  (no cost)
 
-    Markers are coloured by log₁₀(tests/day) on the Plasma scale.
+    Markers are coloured by the metro's average Mbps on the Plasma scale.
     """
     df = df.dropna(subset=['lat', 'long']).copy()
     if df.empty:
@@ -653,10 +670,10 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
         # Marker position from the metro aggregate row
         if not mr.empty:
             lat, lon = float(mr['lat'].iloc[0]), float(mr['long'].iloc[0])
-            tpd_color = float(mr['TpD'].iloc[0])
+            color_val = float(mr['Mbps'].iloc[0])
         elif not sr.empty:
             lat, lon = float(sr['lat'].mean()), float(sr['long'].mean())
-            tpd_color = float(sr['TpD'].sum())
+            color_val = float(sr['Mbps'].sum())
         else:
             continue
 
@@ -690,7 +707,7 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
         lats.append(lat)
         lons.append(lon)
         texts.append("<br>".join(lines))
-        colors.append(math.log10(tpd_color + 1))
+        colors.append(color_val)
 
     if not lats:
         return go.Figure()
@@ -703,7 +720,7 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
             color=colors,
             colorscale='Plasma',
             showscale=True,
-            colorbar=dict(title="log₁₀(T/day)", thickness=12, len=0.6),
+            colorbar=dict(title="Mbps", thickness=12, len=0.6),
             opacity=0.85,
         ),
         hoverinfo='text',
@@ -717,10 +734,11 @@ def fleet_map(df: pd.DataFrame) -> go.Figure:
             bgcolor='rgba(0,0,0,0)',
             projection_type='natural earth',
         ),
+        autosize=True,   # width fills the page; height fixed below
         height=700,
         margin=dict(l=0, r=0, t=5, b=0),
         paper_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#bbb'),
+        font=dict(color='#212121'),
         showlegend=False,
     )
     return fig
@@ -822,11 +840,15 @@ def metro_barchart(
         barmode='group',
         height=500,
         xaxis=dict(tickangle=-45, tickfont=dict(size=10)),
-        yaxis=dict(gridcolor='#333', title=dict(font=dict(size=12)), tickfont=dict(size=11)),
+        # Clip at 12: KSdistance×10 tops out at 10; Spread is an unbounded ratio,
+        # so outliers are capped here to keep the scale readable (true value
+        # still shown on hover).
+        yaxis=dict(range=[0, 12], gridcolor='#333',
+                   title=dict(font=dict(size=12)), tickfont=dict(size=11)),
         margin=dict(l=50, r=20, t=35, b=130),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#bbb'),
+        font=dict(color='#212121'),
         legend=dict(orientation='h', y=1.02, x=0, font=dict(size=13)),
         showlegend=True,
     )
@@ -1022,7 +1044,7 @@ def plotly_calibration_scatter(df: pd.DataFrame) -> go.Figure:
         margin=dict(l=55, r=20, t=30, b=45),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#bbb"),
+        font=dict(color="#212121"),
         showlegend=True,
         legend=dict(orientation="h", y=1.02, x=0, font=dict(size=13)),
     )

@@ -140,7 +140,16 @@ location /differential-histograms/ {
     alias /home/mattmathis/Projects/diff-hist/docs/public/site/;
     try_files $uri $uri.html $uri/index.html =404;   # extensionless URLs → <slug>.html
 }
+
+# Root lands on the bar chart — the recommended starting tool.
+location = / { return 302 /voila/render/global_metro_bar_chart.ipynb?renderNow=True; }
 ```
+
+Navigation: the site root opens the **bar chart** (best place to start); the
+first-cell "project overview" link (`{index_url}`) opens the HTML index at
+`/differential-histograms/`, which is canonical. The `.ipynb` index pages remain
+reachable (`/voila/render/index.ipynb`, `/voila/render/internal/index.ipynb`)
+for now, to be deprecated later.
 
 ## Status
 

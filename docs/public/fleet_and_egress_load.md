@@ -1,11 +1,10 @@
-<!-- REVIEW: harvested from the hand-written index accordion (no Drive doc). This
-     is an internal/operational dashboard that nonetheless appears on the public
-     index. Marker tiers below. -->
+<!-- TODO: Add a selector for map color code;
+     Add ingress traffic estimators -->
 
 # Fleet and Egress Load
 
-Egress volume and cost across the M-Lab server fleet — an internal dashboard for
-fleet lifecycle management and capacity planning.
+Egress volume and traffic value estimates across the global M-Lab server fleet — This is an
+internal dashboard intended to support fleet lifecycle management and capacity planning.
 <!-- snip:index -->
 
 A world map plus a filterable inventory table let you see where traffic and
@@ -26,8 +25,7 @@ metro detail: servers, tests/day, TB/month, Mbps, and estimated cost. Select
 | Metros | one row per metro with aggregate traffic and value |
 | Sites | one row per M-Lab site |
 
-Columns include server count, tests/day, average Mbps, kB/test, TB/month,
-deployment SKU, and estimated daily/annual value.
+Columns include server count, tests per day, average Mbps, average kBytes per test, TeraBytes per month, and estimated value (at a fixed $0.10/GB here): daily and annual values in USD/day and kUSD/year.  M-Lab internal SKU (deployment model), tag, lat, and long are for grouping the data and placing it on the map.  Level indicates the aggregation level shown in the row; pct indicates the percentage relative to the next higher aggregation.
 
 ## Controls
 

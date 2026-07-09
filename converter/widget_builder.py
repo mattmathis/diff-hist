@@ -105,7 +105,8 @@ def _referenced_vars(sql: str, names: set[str]) -> set[str]:
 
 class Controls:
     def __init__(self, variables: list[dict], client, *, presets: dict | None = None,
-                 asn_presets: dict | None = None, after: dict | None = None):
+                 asn_presets: dict | None = None, after: dict | None = None,
+                 hgroups: list[list[str]] | None = None):
         """``variables`` is a list of serialized variable dicts as produced by
         :func:`converter.notebook_builder.serialize_variables`.
         Also accepts a ``Dashboard`` object for use outside the notebook context.
@@ -119,6 +120,12 @@ class Controls:
         layout immediately after that variable's row (e.g. a date-picker row
         placed right after the ``method`` selector).  Ignored if the named
         variable has no widget (hidden/constant).  Format: ``{'method': w}``
+
+        ``hgroups`` is a list of variable-name groups to render side by side on
+        one row (an ``HBox``), in the listed order, positioned where the first
+        present member would appear.  Members with no widget are skipped; a group
+        with fewer than two present members lays out normally.  Example:
+        ``[['endDate', 'duration']]``.
         """
         if hasattr(variables, "variables"):
             variables = [_v_to_dict(v) for v in variables.variables]
@@ -127,6 +134,7 @@ class Controls:
         self.presets = presets or {}
         self.asn_presets = asn_presets or {}
         self.after = after or {}
+        self.hgroups = hgroups or []
         self.defaults = qb.default_values(variables)
         self.widgets: dict[str, widgets.Widget] = {}
         self._fixed: dict[str, object] = {}  # hidden/constant values, no widget
@@ -272,8 +280,23 @@ class Controls:
 
     def _layout_box(self):
         rows = [widgets.HTML("<b>Dashboard controls</b>")]
+        # Horizontal groups: render listed vars side by side at the first present
+        # member's position; the others are skipped in the normal flow.
+        first_of, secondary = {}, set()
+        for g in self.hgroups:
+            present = [n for n in g if n in self.widgets]
+            if len(present) >= 2:
+                first_of[present[0]] = present
+                secondary.update(present[1:])
         for name, w in self.widgets.items():
-            rows.append(getattr(w, "widget", w))
+            if name in secondary:
+                continue
+            if name in first_of:
+                rows.append(widgets.HBox(
+                    [getattr(self.widgets[n], "widget", self.widgets[n])
+                     for n in first_of[name]]))
+            else:
+                rows.append(getattr(w, "widget", w))
             if name in self.after:
                 rows.append(self.after[name])
         return widgets.VBox(rows)

@@ -24,28 +24,28 @@ for a quick introduction.</p>
     https://docs.google.com/presentation/d/1LBmas8kQtiT9Gv48fBjH3Eqbj4DXIVMGdACnTqr9K78/edit
 --&gt;</p>
 <h2><a href="https://annealing.mattmathis.net/voila/render/global_metro_bar_chart.ipynb?renderNow=True">Global Metro Bar Chart</a></h2>
-<p>Interconnect-quality (&quot;pain&quot;) scores for every metro with two or more M-Lab
-servers — how differently the top client ISPs are served across a metro's
-servers. Lower is better; high values suggest some users may struggle to reach
+<p>Interconnect-quality <strong>(&quot;pain&quot;)</strong> scores for every metro with two or more M-Lab
+servers — how differently the top client ISPs are served across the M-Lab servers in the metro. Lower is better; high values suggest some users may struggle to reach
 certain local content.</p>
+<p>For a new user, this is the best place to start.</p>
 <p><a href="https://annealing.mattmathis.net/differential-histograms/global_metro_bar_chart">Full documentation →</a></p>
 <h2><a href="https://annealing.mattmathis.net/voila/render/regional_details_dashboard.ipynb">Regional Details Dashboard</a></h2>
 <p>Detailed performance distributions for the cross-product of selected client ISPs
-and M-Lab servers near an anchor metro. Lines that lie together mean uniform
+and M-Lab servers near an anchor metro. Plot lines that lie together mean uniform
 service; lines that spread apart reveal servers that perform better or worse for
 some users.</p>
 <p><a href="https://annealing.mattmathis.net/differential-histograms/regional_details_dashboard">Full documentation →</a></p>
 <h2><a href="https://annealing.mattmathis.net/voila/render/fleet_and_egress_load.ipynb">Fleet and Egress Load</a></h2>
-<p>Egress volume and cost across the M-Lab server fleet — an internal dashboard for
-fleet lifecycle management and capacity planning.</p>
+<p>Egress volume and traffic value estimates across the global M-Lab server fleet — This is an
+internal dashboard intended to support fleet lifecycle management and capacity planning.</p>
 <p><a href="https://annealing.mattmathis.net/differential-histograms/fleet_and_egress_load">Full documentation →</a></p>
 <h2><a href="https://annealing.mattmathis.net/voila/render/m_lab_calibration_dashboard.ipynb">M-Lab Calibration Dashboard</a></h2>
 <p>Identifies potentially uncalibrated M-Lab servers by comparing measurement
 distributions across nearby sites: if a server is well calibrated, some other
-server should give the same result for at least one client ISP. Low scores are
-best.</p>
-<p><strong>Not suitable for general use</strong> — this version is prone to both false positives
-and false negatives.</p>
+server should give the same result for at least one client ISP in the region.
+Low scores are best, high scores indicate problems.</p>
+<p>This version is not suitable for general use because it is prone to both false positive
+and false negative results.</p>
 <p><a href="https://annealing.mattmathis.net/differential-histograms/m_lab_calibration_dashboard">Full documentation →</a></p>
 <h2><a href="https://annealing.mattmathis.net/voila/render/experimental_regional_details.ipynb">Experimental Regional Details</a></h2>
 <p>Developer version of the Regional Details dashboard, with access to multiple data

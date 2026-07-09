@@ -12,15 +12,15 @@
 <h1>The M-Lab Calibration Dashboard</h1>
 <p>Identifies potentially uncalibrated M-Lab servers by comparing measurement
 distributions across nearby sites: if a server is well calibrated, some other
-server should give the same result for at least one client ISP. Low scores are
-best.</p>
-<p><strong>Not suitable for general use</strong> — this version is prone to both false positives
-and false negatives.</p>
+server should give the same result for at least one client ISP in the region.
+Low scores are best, high scores indicate problems.</p>
+<p>This version is not suitable for general use because it is prone to both false positive
+and false negative results.</p>
 <p>The algorithm scans the selected sites for triplets — a target site, a benchmark
 site, and a client ISP — where both sites give similar measures of that ISP.
 Target sites with high scores (ratio ≫ 1.0 or KS distance ≫ 0.0) have no matching
 site and are suspect for calibration problems. Poor results always need to be
-checked with other methods (e.g. Regional Details); because there is no ground
+checked with other methods (e.g. Regional Details); since we have no ground
 truth, the judgement is somewhat subjective.</p>
 <h2>What it shows</h2>
 <ul>
@@ -29,12 +29,12 @@ Points with ratio &gt; 2 are clamped to the right edge and drawn as triangles.</
 <li><strong>Calibration report table</strong> — the ranked list of pairs; columns below.</li>
 </ul>
 <p>It covers the two most important calibration problems for the fleet: servers with
-inadequate performance (underpowered CPUs / host load) and site ISPs with
+inadequate performance (underpowered CPUs or too much load on a shared server) and site ISPs with
 inadequate upstream connectivity. It does not cover clock quanta and jitter,
-time-of-day, or geolocation unless they affect overall accuracy. The only actions
+time-of-day, or geolocation issues unless they affect overall accuracy. The only actions
 available today are to lower an organization's serving probability or ask it to
-withdraw; in future its data might be redacted from the public BigQuery datasets.</p>
-<p>The defaults (5 client ISPs, sites within the same metro) are sensitive and
+withdraw; in future its data might also be redacted from the public BigQuery datasets.</p>
+<p>The defaults (5 client ISPs, sites within the same metro) are sensitive and relatively
 unlikely to yield a false pass, but don't work well for metros with fewer than 3
 M-Lab sites. Extending the radius and ISP count can force a comparison, but the
 results get harder to interpret.</p>
@@ -44,8 +44,8 @@ results get harder to interpret.</p>
 interconnection health.</li>
 <li><strong>Region</strong> — normally all; can select individual metros or grouped metros.</li>
 <li><strong>Radius</strong> — how far to include candidate benchmark sites. Mainly to force a
-comparison for singleton sites (hard to interpret reliably).</li>
-<li><strong>ISPcount</strong> — client ISPs to scan. More increases the chance of a false pass;
+comparison for singleton sites (but these are hard to interpret reliably).</li>
+<li><strong>ISPcount</strong> — number of client ISPs to scan. More increases the chance of a false pass;
 fewer increases the chance of a false fail during a real peering dispute.</li>
 <li><strong>Method</strong> — select <strong>cached</strong> if present.</li>
 </ul>
@@ -60,18 +60,17 @@ the ratio is small but KS distance is large, inspect the detailed plots.</li>
 <li><strong>Change</strong> — whether the target is better or worse than the benchmark.</li>
 <li><strong>Distance_km</strong> — distance to the candidate benchmark site.</li>
 <li><strong>Triplets</strong> — number of ⟨targetSite, benchmarkSite, clientISP⟩ triplets scanned.</li>
-<li><strong>Breadcrumb</strong> — shorthand of how to find the data, shown as a clickable
-<strong>Details</strong> link to the Regional Details dashboard.</li>
+<li><strong>Breadcrumb</strong> — Shows the Target Site, Benchmark Site, and the ISP used to validate similar results.  These are shown as a clickable link to the Regional Details dashboard to see the details.</li>
 </ul>
 <h2>Interpreting results</h2>
 <p>Sites with enough samples (multiple comparisons and enough tests), high KS
 distance, and high ratio are the strongest recalibration candidates — they differ
-distributionally from neighbours <em>and</em> show a directional gap. High KS distance
+distributionally from neighbors <em>and</em> show a directional gap. High KS distance
 but ratio near 1 may be a symmetric difference with no clear problem.</p>
 <h2>Future calibration checks</h2>
 <ul>
-<li>Confirm the high-performance tail isn't truncated by the client ISP (a false
-pass, since it can't observe performance above its own throughput cap).</li>
+<li>Confirm the high-performance tail isn't truncated by a client ISP with it's own throughput cap.  This might cause a false
+pass, since the client ISP can't validate performance above its own cap.  (This is the source of risk from testing too many client ISPs.)</li>
 <li>Checks for clock quanta/jitter, time-of-day, and geolocation.</li>
 <li>A systematic way to evaluate the trade-offs around the number of client ISPs.</li>
 <li>A connectivity model for regions (e.g. India) where good regional connectivity

@@ -205,8 +205,15 @@ server {
         root /var/www/html;
     }
 
+    # Site root lands on the bar chart (the recommended starting tool).
     location = / {
-        return 302 /voila/render/index.ipynb;
+        return 302 /voila/render/global_metro_bar_chart.ipynb?renderNow=True;
+    }
+
+    # Static public docs (generated into docs/public/site/; served extensionless).
+    location /differential-histograms/ {
+        alias /home/mattmathis/Projects/diff-hist/docs/public/site/;
+        try_files $uri $uri.html $uri/index.html =404;
     }
 
     location / {
@@ -383,7 +390,7 @@ fetched via `fetch_histograms`, not SQL templates.
 
 ### Chained query dropdowns (`converter/widget_builder.py`)
 
-- `Controls(variables, client, *, presets=None, asn_presets=None, after=None)` —
+- `Controls(variables, client, *, presets=None, asn_presets=None, after=None, hgroups=None)` —
   wires observer chains by inspecting each query variable's SQL for references
   to other variable names.
 - `presets` — per-variable value overrides (from URL params).
@@ -394,6 +401,9 @@ fetched via `fetch_histograms`, not SQL templates.
 - `after` — maps a variable name to an extra widget spliced into the layout
   immediately after that variable's row (used to place the date row right after
   the method selector). Ignored if the named variable has no widget.
+- `hgroups` — lists of variable names rendered side by side on one row (`HBox`),
+  in listed order, at the first present member's position (e.g. the fleet
+  notebook groups `['endDate', 'duration']`).
 - `default_select: "all" | "half"` — re-applied when anchor changes invalidates
   the previous server/ISP selection.
 - `CheckboxGroup` — multi-select implemented as individual Checkbox widgets.
@@ -513,9 +523,10 @@ render templates (`_INTERNAL_RENDER`, `_CALIBRATION_RENDER`) build a clickable
 ### Fleet global map (`runtime.fleet_map`)
 
 `fleet_map(df)` — Plotly `Scattergeo` world map. One marker per metro (Subtotal
-by Metro rows from `global_fleet_inventory`). Marker colour encodes
-log₁₀(tests/day); hover shows metro, sites, data/test volumes, and cost.
-The map is rendered when `display` selector includes `metros` or `sites`.
+by Metro rows from `global_fleet_inventory`). Marker colour encodes the metro's
+average **Mbps**; hover shows metro, sites, data/test volumes, and cost. Sized to
+page width (`autosize`, responsive config). Rendered when the `display` selector
+includes `metros` or `sites`.
 
 ### Code cell hiding and UI defaults
 

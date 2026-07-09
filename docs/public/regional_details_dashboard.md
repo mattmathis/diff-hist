@@ -1,14 +1,9 @@
-<!-- REVIEW: merged from the Drive doc "Documentation for the Regional Details
-     Dashboard" (Grafana-era) and the good parts of the hand-written index
-     accordion (Selectors, Reading the charts, Cached data). Revised for the
-     Voilà notebook: Client ISPs now default to ALL selected, and the "extra
-     client rows" workaround is the Extra rows selector (multi-metro). VERIFY the
-     Metrics/Table options against the current notebook. Marker tiers below. -->
+<!-- TODO: First load gets a spurious BQ error -->
 
 # Regional Details Dashboard
 
 Detailed performance distributions for the cross-product of selected client ISPs
-and M-Lab servers near an anchor metro. Lines that lie together mean uniform
+and M-Lab servers near an anchor metro. Plot lines that lie together mean uniform
 service; lines that spread apart reveal servers that perform better or worse for
 some users.
 <!-- snip:index -->
@@ -26,9 +21,9 @@ that can adversely affect users.
 - **Anchor Metro** — geographic centre used to preselect servers and rank client
   ISPs. Changing it re-populates both Servers and Client ISPs.
 - **Radius (km)** — how far from the anchor to include additional M-Lab servers.
-- **Servers** — M-Lab sites within the radius; defaults to all.
+- **Servers** — select M-Lab sites within the radius; defaults to all.
 - **Client Rows** — how many top-ranked ISPs to pre-process.
-- **Client ISPs** — subset of Client Rows to plot; defaults to **all** selected.
+- **Client ISPs** — select a subset of Client ISPs to plot; defaults to **all** selected.
 - **Extra rows** — appears when the selected servers span multiple metros. Client
   ISPs are ranked independently per metro, so an ISP's rank can differ between
   them; Extra rows pulls in additional ranked ISPs so cross-metro comparisons
@@ -45,7 +40,7 @@ that can adversely affect users.
 Each chart row is one client ISP; each chart is one metric, with one line per
 M-Lab server site. The figure is split vertically — **PDF** (probability density)
 in the bottom half, **CDF** (cumulative distribution) in the top half — sharing
-the same x-axis and a consistent colour per site. Legend labels include the
+the same x-axis and a consistent color per site. Legend labels include the
 total test count.
 
 ## Cached data

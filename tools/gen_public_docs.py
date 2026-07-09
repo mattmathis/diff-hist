@@ -33,7 +33,9 @@ DOCS = Path("docs/public")
 SITE = DOCS / "site"
 STAGE = Path("notebooks.stage")
 FULLDOC_BASE = "https://annealing.mattmathis.net/differential-histograms"
-INDEX_URL = "https://annealing.mattmathis.net/"
+# The polished HTML index is the canonical landing page; "project overview"
+# links point there rather than at the .ipynb index (kept but being deprecated).
+INDEX_URL = "https://annealing.mattmathis.net/differential-histograms/"
 VOILA_BASE = "https://annealing.mattmathis.net/voila/render/"
 
 # Ordered index entries. `doc` -> docs/public/<doc>.md; `nb` -> staged notebook

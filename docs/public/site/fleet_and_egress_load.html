@@ -10,8 +10,8 @@
 <body>
 <main>
 <h1>Fleet and Egress Load</h1>
-<p>Egress volume and cost across the M-Lab server fleet — an internal dashboard for
-fleet lifecycle management and capacity planning.</p>
+<p>Egress volume and traffic value estimates across the global M-Lab server fleet — This is an
+internal dashboard intended to support fleet lifecycle management and capacity planning.</p>
 <p>A world map plus a filterable inventory table let you see where traffic and
 serving value are concentrated across the fleet.</p>
 <h2>What it shows</h2>
@@ -41,8 +41,7 @@ metro detail: servers, tests/day, TB/month, Mbps, and estimated cost. Select
 </tr>
 </tbody>
 </table>
-<p>Columns include server count, tests/day, average Mbps, kB/test, TB/month,
-deployment SKU, and estimated daily/annual value.</p>
+<p>Columns include server count, tests per day, average Mbps, average kBytes per test, TeraBytes per month, and estimated value (at a fixed $0.10/GB here): daily and annual values in USD/day and kUSD/year.  M-Lab internal SKU (deployment model), tag, lat, and long are for grouping the data and placing it on the map.  Level indicates the aggregation level shown in the row; pct indicates the percentage relative to the next higher aggregation.</p>
 <h2>Controls</h2>
 <table>
 <thead>

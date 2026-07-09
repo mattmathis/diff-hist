@@ -11,7 +11,7 @@
 <main>
 <h1>Regional Details Dashboard</h1>
 <p>Detailed performance distributions for the cross-product of selected client ISPs
-and M-Lab servers near an anchor metro. Lines that lie together mean uniform
+and M-Lab servers near an anchor metro. Plot lines that lie together mean uniform
 service; lines that spread apart reveal servers that perform better or worse for
 some users.</p>
 <p>The <strong>Anchor Metro</strong> defines the region: it preselects the M-Lab servers within
@@ -25,9 +25,9 @@ that can adversely affect users.</p>
 <li><strong>Anchor Metro</strong> — geographic centre used to preselect servers and rank client
 ISPs. Changing it re-populates both Servers and Client ISPs.</li>
 <li><strong>Radius (km)</strong> — how far from the anchor to include additional M-Lab servers.</li>
-<li><strong>Servers</strong> — M-Lab sites within the radius; defaults to all.</li>
+<li><strong>Servers</strong> — select M-Lab sites within the radius; defaults to all.</li>
 <li><strong>Client Rows</strong> — how many top-ranked ISPs to pre-process.</li>
-<li><strong>Client ISPs</strong> — subset of Client Rows to plot; defaults to <strong>all</strong> selected.</li>
+<li><strong>Client ISPs</strong> — select a subset of Client ISPs to plot; defaults to <strong>all</strong> selected.</li>
 <li><strong>Extra rows</strong> — appears when the selected servers span multiple metros. Client
 ISPs are ranked independently per metro, so an ISP's rank can differ between
 them; Extra rows pulls in additional ranked ISPs so cross-metro comparisons
@@ -43,7 +43,7 @@ only for the non-cached methods.</li>
 <p>Each chart row is one client ISP; each chart is one metric, with one line per
 M-Lab server site. The figure is split vertically — <strong>PDF</strong> (probability density)
 in the bottom half, <strong>CDF</strong> (cumulative distribution) in the top half — sharing
-the same x-axis and a consistent colour per site. Legend labels include the
+the same x-axis and a consistent color per site. Legend labels include the
 total test count.</p>
 <h2>Cached data</h2>
 <p>With <code>method=cached</code> the notebook uses pre-computed histograms; the actual data
