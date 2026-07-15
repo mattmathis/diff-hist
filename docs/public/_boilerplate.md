@@ -7,4 +7,4 @@
 For information about Differential Histograms and how they expose anomalies in Internet mid-paths
 see the **[project overview]({index_url})**.
 
-See **[{tool}]({fulldoc_url})** for complete documentation.
+See **[complete]({fulldoc_url})** {tool} documentation.

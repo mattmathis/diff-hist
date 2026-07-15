@@ -941,10 +941,6 @@ def render(_=None):
 
     out.clear_output(wait=True)
     with out:
-        if method == "cached":
-            _date_label.value = (
-                '<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> '
-                + rt.get_cached_date_range(client, _DATASET) + '</div>')
         try:
             df = rt.run_calibration_report(
                 client, method, _X_AXIS, _BIN_SIZE,
@@ -981,6 +977,12 @@ def render(_=None):
                 + rt.to_html_sticky(_table_df, index=False, na_rep="", escape=False)
                 + \'</div>\'
             ))
+
+        # Cached date range (~5s) — computed after the report so it renders first.
+        if method == "cached":
+            _date_label.value = (
+                '<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> '
+                + rt.get_cached_date_range(client, _DATASET) + '</div>')
 
         _diag_out = widgets.Output()
         with _diag_out:
@@ -1021,10 +1023,6 @@ def render(_=None):
 
     out.clear_output(wait=True)
     with out:
-        if method == "cached":
-            _date_label.value = (
-                \'<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> \'
-                + rt.get_cached_date_range(client, _DATASET) + \'</div>\')
         try:
             df = rt.run_competition_report(
                 client, _REPORT_TYPE, method,
@@ -1039,11 +1037,14 @@ def render(_=None):
             df = None
 
         if df is not None and not df.empty:
-            _display_df = df.copy()
-            _bc = next((c for c in df.columns if c.lower() == "breadcrumb"), None)
+            # Drop BCargs (leftover debugging column from an earlier link attempt).
+            _display_df = df.drop(columns=[c for c in df.columns if c.lower() == "bcargs"],
+                                  errors="ignore").copy()
+            _bc = next((c for c in _display_df.columns if c.lower() == "breadcrumb"), None)
             if _bc:
-                _display_df[_bc] = df[_bc].apply(
-                    lambda b: f\'<a href="{{rt.breadcrumb_to_url(str(b))}}" target="_blank">{{b}}</a>\'
+                _display_df[_bc] = _display_df[_bc].apply(
+                    lambda b: (f\'<a href="{{rt.breadcrumb_to_url(str(b))}}" target="_blank"\'
+                               f\' style="text-decoration:underline">{{b}}</a>\')
                     if str(b).strip() else "")
                 _display_df = _display_df.rename(columns={{_bc: "Breadcrumb"}})
             display(widgets.HTML(
@@ -1051,6 +1052,12 @@ def render(_=None):
                 + rt.to_html_sticky(_display_df, index=False, na_rep="", escape=False)
                 + \'</div>\'
             ))
+
+        # Cached date range (~5s) — computed after the report so it renders first.
+        if method == "cached":
+            _date_label.value = (
+                \'<div style="font-size:12px;color:grey;margin:2px 0"><b>Cached data:</b> \'
+                + rt.get_cached_date_range(client, _DATASET) + \'</div>\')
 
         _diag_out = widgets.Output()
         with _diag_out:
@@ -1070,7 +1077,7 @@ _DISPLAY = '''\
 # --- Display the app ---
 # _date_row is inserted inside ctrl.box (right after the method selector) by
 # Controls(after=...); only the status label, Run button, and output remain here.
-display(widgets.VBox([ctrl.box, _date_label, w_run, out]))
+display(widgets.VBox([ctrl.box, w_run, out, _date_label]))
 '''
 
 

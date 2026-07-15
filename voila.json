@@ -4,6 +4,12 @@
     "token": "",
     "open_browser": false
   },
+  "VoilaConfiguration": {
+    "preheat_kernel": true
+  },
+  "VoilaKernelManager": {
+    "default_pool_size": 1
+  },
   "MappingKernelManager": {
     "cull_idle_timeout": 600,
     "cull_interval": 60,
