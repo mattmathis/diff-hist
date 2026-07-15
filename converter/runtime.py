@@ -12,8 +12,11 @@ the generated setup cell handles that.
 from __future__ import annotations
 
 import copy
+import html
+import io
 import math
 import re
+import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -38,9 +41,70 @@ def bq_client(project: str | None = None):
     return bigquery.Client(project=project or DEFAULT_PROJECT)
 
 
+# Debugging surface: every run_query() execution is recorded here (SQL, elapsed
+# time, row count, and DataFrame.info()) and surfaced in the notebook's collapsed
+# Diagnostics panel via query_log_html().  Cache *hits* (e.g. re-used histogram
+# queries, which never reach run_query) are not re-logged.  Per-kernel; capped.
+_QUERY_LOG: list[dict] = []
+_QUERY_LOG_MAX = 50
+
+
+def clear_query_log() -> None:
+    """Drop all recorded query-log entries."""
+    _QUERY_LOG.clear()
+
+
+def query_log() -> list[dict]:
+    """Return the recorded query log (oldest first): sql, elapsed_s, n_rows, info."""
+    return list(_QUERY_LOG)
+
+
 def run_query(client, sql: str) -> pd.DataFrame:
-    """Execute ``sql`` and return the result as a DataFrame."""
-    return client.query(sql).result().to_dataframe(create_bqstorage_client=False)
+    """Execute ``sql`` and return the result as a DataFrame.
+
+    Each execution is timed and recorded in :data:`_QUERY_LOG` for the
+    Diagnostics panel.  Recording never affects the returned result.
+    """
+    t0 = time.perf_counter()
+    df = client.query(sql).result().to_dataframe(create_bqstorage_client=False)
+    elapsed = time.perf_counter() - t0
+    buf = io.StringIO()
+    try:
+        df.info(buf=buf)
+        info = buf.getvalue()
+    except Exception as exc:  # never let logging break a query
+        info = f"(info unavailable: {exc})"
+    _QUERY_LOG.append({"sql": sql, "elapsed_s": elapsed,
+                       "n_rows": len(df), "info": info})
+    del _QUERY_LOG[:-_QUERY_LOG_MAX]  # keep only the most recent N
+    return df
+
+
+def query_log_html() -> str:
+    """Render :data:`_QUERY_LOG` as copyable HTML (newest first) for Diagnostics.
+
+    Emitted through ``ipywidgets.HTML`` (not sanitized), so ``<details>``/
+    ``<pre>`` and inline styles survive Voilà's DOMPurify.
+    """
+    if not _QUERY_LOG:
+        return "<i>No queries recorded yet.</i>"
+    n = len(_QUERY_LOG)
+    total = sum(e["elapsed_s"] for e in _QUERY_LOG)
+    parts = [f'<b>Query log</b> &mdash; {n} quer{"y" if n == 1 else "ies"}, '
+             f'{total:.2f}s total (newest first):']
+    for i, e in enumerate(reversed(_QUERY_LOG)):
+        sql = html.escape((e["sql"] or "").strip())
+        info = html.escape(e["info"] or "")
+        parts.append(
+            f'<details{" open" if i == 0 else ""} style="margin:4px 0">'
+            f'<summary style="cursor:pointer;font-family:monospace;font-size:12px">'
+            f'#{n - i} &middot; {e["elapsed_s"]:.2f}s &middot; '
+            f'{e["n_rows"]:,} rows</summary>'
+            f'<pre style="white-space:pre-wrap;font-size:11px;padding:6px;'
+            f'background:var(--jp-layout-color1,#f5f5f5);overflow:auto">{sql}</pre>'
+            f'<pre style="font-size:11px;padding:6px;overflow:auto">{info}</pre>'
+            f'</details>')
+    return "\n".join(parts)
 
 
 def variable_options(client, sql: str) -> list[tuple[str, str]]:

@@ -901,6 +901,7 @@ def render(_=None):
         _diag_out = widgets.Output()
         with _diag_out:
             display(_diagnostics(ctx))
+            display(widgets.HTML(rt.query_log_html()))
         _diag_acc = widgets.Accordion(children=[_diag_out])
         _diag_acc.set_title(0, 'Selector Diagnostics')
         _diag_acc.selected_index = None   # collapsed by default
@@ -987,6 +988,7 @@ def render(_=None):
         _diag_out = widgets.Output()
         with _diag_out:
             display(_diagnostics(ctx))
+            display(widgets.HTML(rt.query_log_html()))
         _diag_acc = widgets.Accordion(children=[_diag_out])
         _diag_acc.set_title(0, "Selector Diagnostics")
         _diag_acc.selected_index = None
@@ -1062,6 +1064,7 @@ def render(_=None):
         _diag_out = widgets.Output()
         with _diag_out:
             display(_diagnostics(ctx))
+            display(widgets.HTML(rt.query_log_html()))
         _diag_acc = widgets.Accordion(children=[_diag_out])
         _diag_acc.set_title(0, "Selector Diagnostics")
         _diag_acc.selected_index = None
