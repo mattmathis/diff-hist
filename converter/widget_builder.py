@@ -159,7 +159,11 @@ class Controls:
     # -- build -------------------------------------------------------------
     def _build(self):
         style = {"description_width": "110px"}
-        layout = widgets.Layout(width="420px")
+        # NB: each widget gets its OWN Layout object.  A shared Layout is mutated
+        # in place by the visibility toggles (e.g. _toggle_extra_rows sets
+        # .layout.display='none'), which would hide every widget sharing it.
+        def layout():
+            return widgets.Layout(width="420px")
         query_vars = []
         for v in self._variables:
             name = v["name"]
@@ -174,7 +178,7 @@ class Controls:
                 if v["multi"]:
                     w = CheckboxGroup(description=label)
                 else:
-                    w = widgets.Dropdown(description=label, style=style, layout=layout)
+                    w = widgets.Dropdown(description=label, style=style, layout=layout())
                 w._var_description = desc
                 self.widgets[name] = w
             elif v["type"] == "textbox":
@@ -190,7 +194,7 @@ class Controls:
                 w = widgets.Text(
                     value=_default_val,
                     description=label,
-                    style=style, layout=layout,
+                    style=style, layout=layout(),
                 )
                 w._var_description = desc
                 self.widgets[name] = w
@@ -201,7 +205,7 @@ class Controls:
                     w = CheckboxGroup(opts, description=label)
                 else:
                     w = widgets.Dropdown(options=opts or None, description=label,
-                                         style=style, layout=layout)
+                                         style=style, layout=layout())
                 want = self._preset(name, self.defaults.get(name))
                 _set_value(w, want)
                 w._var_description = desc
