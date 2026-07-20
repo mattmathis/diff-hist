@@ -290,6 +290,37 @@ git pull
 sudo systemctl restart voila
 ```
 
+### Dev on annealing (working remotely / while traveling)
+
+`annealing` doubles as a remote dev box when the desktop is unreachable. It
+already has the repo at the **same path** (`/home/mattmathis/Projects/diff-hist`)
+and — unlike a laptop — its BigQuery access comes from the compute SA via ADC, so
+it sidesteps the Workspace reauth lapse that periodically kills a local `bq`
+token (`method=cached` and, when the backend is healthy, `live` both work).
+
+```bash
+# One-time: install Claude Code (needs Node 18+) and authenticate.
+npm install -g @anthropic-ai/claude-code        # or the native installer
+claude                                           # login: open the printed URL
+                                                 #   in a laptop/phone browser
+```
+
+- **Survive flaky connections.** Always run inside a persistent session so an SSH
+  drop doesn't kill work in progress: `mosh mattmathis@annealing.mattmathis.net`
+  (best for roaming), or `ssh` + `tmux new -s cc` (reattach with `tmux attach -t cc`).
+- **Don't dev in the live-served tree in a way that half-deploys.** The systemd
+  Voilà service serves `notebooks/` from this same checkout. Safe flow: edit →
+  regenerate to `notebooks.stage/` (gitignored) → promote to `notebooks/` →
+  `sudo systemctl restart voila`. For stronger isolation, do Claude Code work in
+  a second clone (e.g. `~/Projects/diff-hist-dev`) and let the production
+  checkout only `git pull` + restart.
+- **Continuity.** A fresh Claude Code in the checkout auto-loads `CLAUDE.md` (and
+  the committed work). To carry a specific conversation over, the home dir and
+  repo path match the desktop, so copy the session transcript + `memory/` into
+  `~/.claude/projects/-home-mattmathis-Projects-diff-hist/` and `claude --resume`.
+- **Python for the tools:** use `/usr/bin/python3` (it has `nbformat` +
+  `google-cloud-bigquery`); the repo-root `.venv` lacks `nbformat`.
+
 ## URL Parameter Presets (webapp mode)
 
 Voilà injects the HTTP request's query string into `os.environ["QUERY_STRING"]`
